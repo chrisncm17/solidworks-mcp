@@ -1,0 +1,18 @@
+{
+  "name": "solidworks-mcp",
+  "version": "3.9.0",
+  "description": "MCP server that lets AI agents (Claude, Codex, any MCP client) model, assemble, verify and draw in SolidWorks on Windows",
+  "license": "MIT",
+  "type": "module",
+  "main": "server/server.mjs",
+  "os": ["win32"],
+  "engines": { "node": ">=18" },
+  "scripts": {
+    "start": "node server/server.mjs",
+    "build": "powershell -NoProfile -ExecutionPolicy Bypass -File server/build.ps1",
+    "test": "node --test server/tests.mjs",
+    "tools": "node scripts/list-tools.mjs"
+  },
+  "keywords": ["solidworks", "mcp", "model-context-protocol", "cad", "claude", "codex", "ai-agent", "mechanical-engineering"],
+  "dependencies": { "@modelcontextprotocol/sdk": "1.32.0", "ajv": "8.17.1" }
+}

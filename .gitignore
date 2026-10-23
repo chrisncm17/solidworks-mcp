@@ -1,0 +1,11 @@
+node_modules/
+server/generated/
+server/Worker-equations.exe
+server/Worker-equations.old-*.exe
+server/SolidWorks.Interop.*.dll
+examples/drawings/*.png
+*.log
+~$*
+.DS_Store
+Thumbs.db
+server/Worker-equations.build.exe

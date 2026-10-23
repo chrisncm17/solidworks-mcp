@@ -1,0 +1,13 @@
+{
+  "ir": "part-ir/1",
+  "part": "Placa_IR",
+  "units": "mm",
+  "material": { "name": "AISI 1020" },
+  "params": { "L": 80, "W": 50, "T": 10, "D": 8, "e": 20, "R": 2 },
+  "features": [
+    { "id": "placa", "op": "extrude", "sketch": { "plane": "top", "entities": [ { "rect": { "from": [0, 0], "to": ["L", "W"] } } ] }, "depth": "T", "direction": "+Y" },
+    { "id": "barrenos", "op": "cut", "sketch": { "plane": "top", "entities": [ { "circle": { "center": ["e", "W/2"], "d": "D" } }, { "circle": { "center": ["L-e", "W/2"], "d": "D" } } ] }, "end": "through_all_both" },
+    { "id": "redondeo", "op": "fillet", "edges": [ { "near": ["L", 5, 0] } ], "radius": "R" }
+  ],
+  "expect": { "bodies": 1, "volume_mm3": "L*W*T - 2*pi*(D/2)^2*T - (R^2 - pi*R^2/4)*T", "box_mm": ["L", "T", "W"] }
+}
