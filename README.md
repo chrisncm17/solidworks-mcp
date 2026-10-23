@@ -1,5 +1,7 @@
 # SolidWorks MCP
 
+![SolidWorks MCP: AI agents model, assemble, verify and draw in SOLIDWORKS](docs/images/social_preview.png)
+
 **Let an AI agent model, assemble, verify and draw in SolidWorks.** A [Model Context Protocol](https://modelcontextprotocol.io) server for SolidWorks on Windows with 106 tools: parts from a short recipe, whole assemblies in one call, exact mass and center of mass, drawings with BOM, balloons and section views, and reading of PDF/DXF drawings - all with backups and verified rollback so your own files are never broken.
 
 Works with **Claude Desktop, Claude Code, OpenAI Codex (CLI / IDE)** and any MCP client that can launch a local (stdio) server.

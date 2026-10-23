@@ -1,5 +1,7 @@
 # SolidWorks MCP (español)
 
+![SolidWorks MCP: agentes de IA que modelan, ensamblan, verifican y hacen planos en SOLIDWORKS](docs/images/social_preview.png)
+
 **Un agente de IA que modela, ensambla, verifica y hace planos en SolidWorks.** Servidor [MCP](https://modelcontextprotocol.io) para SolidWorks en Windows con 106 herramientas: piezas desde una receta corta, ensambles completos en una llamada, masa y centro de masa exactos, planos con BOM, globos y cortes, y lectura de planos PDF/DXF. Siempre con respaldos y reversión verificada: tus archivos no se rompen.
 
 Funciona con **Claude Desktop, Claude Code, OpenAI Codex (CLI / IDE)** y cualquier cliente MCP que pueda lanzar un servidor local (stdio).
