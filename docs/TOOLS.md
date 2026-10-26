@@ -1447,7 +1447,7 @@ Inspect faces and unique edges with short-lived selection references. Coordinate
 
 ### `sw_wrap`
 
-v3.11 Envolver: wrap a closed sketch onto a face of the part. sketch = sketch on a plane parallel or tangent to the face; face_point_mm = a point ON the target face (part mm, e.g. from sw_find_faces or sw_preview label_faces); type emboss (raised, default), deboss (engraved) or scribe (split lines only, no depth); depth_mm for emboss/deboss; reverse flips the side; method analytical (cylinders, cones, extruded faces; default) or spline (any face). Returns volume before/after. Unsaved until sw_save. EXPERIMENTAL: in SolidWorks 2026 SP3.2 the API returned null for profiles that sw_loft accepts (tested); if it fails, use sw_loft with the same sketches.
+v3.11 Envolver: wrap a closed sketch onto a face of the part. sketch = sketch on a plane parallel or tangent to the face; face_point_mm = a point ON the target face (part mm, e.g. from sw_find_faces or sw_preview label_faces); type emboss (raised, default), deboss (engraved) or scribe (split lines only, no depth); depth_mm for emboss/deboss; reverse flips the side; method analytical (cylinders, cones, extruded faces; default) or spline (any face). Returns volume before/after. Unsaved until sw_save.
 
 | Option | Type / values | Required | Notes |
 |---|---|---|---|
