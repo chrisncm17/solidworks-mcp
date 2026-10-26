@@ -1,6 +1,6 @@
 {
   "name": "solidworks-mcp",
-  "version": "3.9.0",
+  "version": "3.11.0",
   "description": "MCP server that lets AI agents (Claude, Codex, any MCP client) model, assemble, verify and draw in SolidWorks on Windows",
   "license": "MIT",
   "type": "module",

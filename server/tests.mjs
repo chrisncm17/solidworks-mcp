@@ -132,13 +132,20 @@ test('edge selection rejects duplicate and malformed references', () => {
   assert.equal(check({...args,angle_deg:90}),false);
   assert.equal(check({...args,edge_references:[...args.edge_references,...args.edge_references]}),false);
 });
-function fakeWorker(code,timeoutMs=2000){return new WorkerClient({executable:process.execPath,args:['--input-type=module','-e',code],timeoutMs});}
+function fakeWorker(code,timeoutMs=2000,hardTimeoutMs=10000){return new WorkerClient({executable:process.execPath,args:['--input-type=module','-e',code],timeoutMs,hardTimeoutMs});}
 test('concurrent calls are serialized and input is captured at submission', async () => {
   const w=fakeWorker(`import {createInterface} from 'node:readline';let busy=false;createInterface({input:process.stdin}).on('line',line=>{if(busy)process.exit(3);busy=true;const r=JSON.parse(line);setTimeout(()=>{busy=false;console.log(JSON.stringify({ok:true,result:r.arguments}));},30);});`);
   try {const arg={x:1};const first=w.call('demo',arg);arg.x=9;const results=await Promise.all([first,w.call('demo',{x:2})]);assert.deepEqual(results.map(x=>x.result.x),[1,2]);}finally{w.close();}
 });
-test('timeout discards worker and prevents subsequent edits', async () => {
-  const w=fakeWorker('process.stdin.resume();',100);
+test('v3.11 timeout keeps the worker: the late result is kept and the next call waits for it', async () => {
+  const w=fakeWorker(`import {createInterface} from 'node:readline';createInterface({input:process.stdin}).on('line',line=>setTimeout(()=>console.log(JSON.stringify({ok:true,result:JSON.parse(line).operation})),150));`,60);
+  try{await assert.rejects(w.call('slow',{}),/still running.*UNKNOWN/);const late0=w.takeLate().length;
+   const next=await w.call('next',{}).catch(e=>e);assert.equal(late0,0);
+   const late=w.takeLate();assert.equal(late.length,1);assert.equal(late[0].operation,'slow');assert.equal(late[0].response.result,'slow');
+   assert.ok(next instanceof Error?/still running/.test(next.message):next.result==='next');}finally{w.close();}
+});
+test('v3.11 a silent worker is killed only after hardTimeoutMs and the outcome is UNKNOWN', async () => {
+  const w=fakeWorker('process.stdin.resume();',30,200);
   try{await assert.rejects(w.call('demo',{}),/UNKNOWN/);await assert.rejects(w.call('demo',{}),/UNKNOWN/);}finally{w.close();}
 });
 test('malformed worker output cannot be mistaken for success', async () => {
@@ -149,9 +156,10 @@ test('cancelled queued requests never reach CAD', async () => {
   const w=fakeWorker(`import {createInterface} from 'node:readline';createInterface({input:process.stdin}).on('line',line=>setTimeout(()=>console.log(JSON.stringify({ok:true,result:JSON.parse(line).operation})),40));`);
   try{const first=w.call('first',{});const control=new AbortController();const second=w.call('forbidden',{}, {signal:control.signal});control.abort();await first;await assert.rejects(second,/before CAD execution/);assert.equal((await w.call('third',{})).result,'third');}finally{w.close();}
 });
-test('active cancellation reports an unknown outcome and closes channel', async () => {
-  const w=fakeWorker('process.stdin.resume();');const control=new AbortController();
-  try{const pending=w.call('demo',{}, {signal:control.signal});setTimeout(()=>control.abort(),30);await assert.rejects(pending,/UNKNOWN/);await assert.rejects(w.call('next',{}),/UNKNOWN/);}finally{w.close();}
+test('v3.11 active cancellation reports an unknown outcome without killing the worker', async () => {
+  const w=fakeWorker(`import {createInterface} from 'node:readline';createInterface({input:process.stdin}).on('line',line=>setTimeout(()=>console.log(JSON.stringify({ok:true,result:JSON.parse(line).operation})),120));`);const control=new AbortController();
+  try{const pending=w.call('demo',{}, {signal:control.signal});setTimeout(()=>control.abort(),30);await assert.rejects(pending,/cancelled.*UNKNOWN/);
+   assert.equal((await w.call('next',{})).result,'next');const late=w.takeLate();assert.equal(late.length,1);assert.equal(late[0].reason,'cancelled');}finally{w.close();}
 });
 
 test('equation inspection requires document identity and forbids mutation arguments', () => {
@@ -946,7 +954,8 @@ test('v3.7: build traduce ids, conserva orden/transform/config y no guarda tras 
   assert.equal(r.verification.mass_checks.length, 2); assert.equal(r.moved_components.length, 2);
   assert.ok(calls.every(c => c.options.signal === ctrl.signal));
   for (const v of Object.values(r.timings_ms)) assert.ok(Number.isFinite(v) && v >= 0);
-  assert.deepEqual(calls.map(c => c.op), ['environment','assembly_new','insert_component','insert_component','add_mate','add_mate','mates','coordinate_system','coordinate_system','document_units','save','mates','assembly_doctor','mass_check','mass_check','interference']);
+  assert.deepEqual(calls.map(c => c.op), ['environment','assembly_new','insert_component','insert_component','add_mate','add_mate','mates','coordinate_system','coordinate_system','document_units','save','mates','assembly_doctor','mass_check','mass_check','session_health','interference']);
+  assert.deepEqual(calls.find(c => c.op === 'session_health').a, { action: 'cleanup' }); // v3.11: leftovers closed before the last check
 });
 
 test('v3.7: primer mate fallido detiene build y conserva diagnostico de movimientos previos', async () => {
@@ -1395,4 +1404,85 @@ test('DXF geometry: bulge over 180 deg, NURBS spline, block base point, inch dim
     '0', 'DIMENSION', '5', 'C1', '2', '*D1', '10', '1', '20', '0.5', '11', '2', '21', '0.5', '70', '32', '1', '<>', '13', '1', '23', '1', '14', '3', '24', '1', '50', '0', '0', 'ENDSEC', '0', 'EOF'));
   const dd = dxfDimensions(f2).dimensions[0];
   assert.equal(dd.value, 50.8, '2 in = 50.8 mm'); assert.equal(dd.printed_value, 2); assert.equal(dd.measured_mm, 50.8); assert.equal(dd.scale_ok, true);
+});
+test('v3.10: detail view, manual drawing dimensions, labelled preview and combine are validated before running', () => {
+  const ok = (n, a) => { assert.equal(validate.get(n)(a), true, n + ' ' + JSON.stringify(a)); assert.equal(argumentError(n.slice(3), a), null, JSON.stringify(a)); };
+  const bad = (n, a) => assert.ok(!validate.get(n)(a) || argumentError(n.slice(3), a), n + ' should refuse ' + JSON.stringify(a));
+  ok('sw_drawing_views', { document_id: 'd', action: 'detail', sheet: 'Hoja1', view: 'Vista de dibujo1', radius_mm: 8, through_mm: [10, 0, 5], scale: 2 });
+  bad('sw_drawing_views', { document_id: 'd', action: 'detail', sheet: 'Hoja1', view: 'V' });
+  bad('sw_drawing_views', { document_id: 'd', action: 'set', sheet: 'Hoja1', view: 'V', scale: 1, radius_mm: 3 });
+  bad('sw_drawing_views', { document_id: 'd', action: 'detail', sheet: 'Hoja1', view: 'V', radius_mm: 3, flip: true });
+  ok('sw_drawing_dimension', { document_id: 'd', action: 'probe', sheet: 'Hoja1', view: 'V', kind: 'circle' });
+  ok('sw_drawing_dimension', { document_id: 'd', action: 'add', sheet: 'Hoja1', view: 'V', edges: [3, 7], type: 'angle', position_mm: [100, 80] });
+  bad('sw_drawing_dimension', { document_id: 'd', action: 'add', sheet: 'Hoja1', view: 'V' });
+  bad('sw_drawing_dimension', { document_id: 'd', action: 'add', sheet: 'Hoja1', view: 'V', edges: [1, 2, 3] });
+  bad('sw_drawing_dimension', { document_id: 'd', action: 'probe', sheet: 'Hoja1', view: 'V', edges: [1] });
+  ok('sw_preview', { document_id: 'd' });
+  ok('sw_preview', { document_id: 'd', views: ['front', 'top', 'iso'], label_faces: true, max_labels: 30 });
+  bad('sw_preview', { document_id: 'd', views: ['side'] });
+  bad('sw_preview', { document_id: 'd', max_labels: 5 });
+  ok('sw_combine', { document_id: 'd', operation: 'subtract', main_point_mm: [0, 0, 10], tool_points_mm: [[5, 5, 20]] });
+  ok('sw_combine', { document_id: 'd', operation: 'add' });
+  bad('sw_combine', { document_id: 'd', operation: 'subtract' });
+  bad('sw_combine', { document_id: 'd', operation: 'union' });
+  bad('sw_combine', { document_id: 'd', operation: 'subtract', main_index: 0, main_point_mm: [0, 0, 0] });
+  assert.equal(tools.find(t => t.operation === 'combine').annotations.readOnlyHint, false);
+});
+
+// ---------- v3.11 ----------
+import { compactWorkerResponse } from './compact.mjs';
+import { sessionRecipe, recordCall } from './session_recorder.mjs';
+import { mkdtempSync, readFileSync as rf311, existsSync as ex311, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join as j311 } from 'node:path';
+test('v3.11: big assembly inspections are compacted to top-level components with a details file', () => {
+  const root = mkdtempSync(j311(tmpdir(), 'sw311-'));
+  const comps = [{ name: 'A-1', path: 'C:\\x\\A.SLDASM', fixed_position: true, transform: [1,0,0,0,1,0,0,0,1,-0.2,0,0,1,0,0,0], unsaved_changes: false }];
+  for (let i = 0; i < 60; i++) comps.push({ name: `A-1/P${i}-1`, path: `C:\\x\\P${i}.SLDPRT`, fixed_position: true, transform: [1,0,0,0,1,0,0,0,1,0,0,0,1,0,0,0], unsaved_changes: i < 3 });
+  const raw = { ok: true, result: { component: 'A-1', inspection: { title: 'T', mass_g: 5, components: comps } } };
+  const c = compactWorkerResponse(raw, root, 'insert_component');
+  assert.equal(c.result.inspection.components.length, 1);
+  assert.deepEqual(c.result.inspection.components[0], { name: 'A-1', file: 'A.SLDASM', fixed: true, origin_mm: [-200, 0, 0], unsaved: undefined, nested_components: 60 });
+  assert.equal(c.result.inspection.component_count, 61); assert.equal(c.result.inspection.unsaved_count, 3);
+  assert.ok(ex311(c.details_file)); assert.equal(JSON.parse(rf311(c.details_file, 'utf8')).result.inspection.components.length, 61);
+  assert.equal(compactWorkerResponse({ ok: true, result: { inspection: { components: comps.slice(0, 5) } } }, root, 'x').details_file, undefined);
+  rmSync(root, { recursive: true, force: true });
+});
+test('v3.11: session_recipe records changing calls and exports a recipe without document ids', () => {
+  const root = mkdtempSync(j311(tmpdir(), 'sw311r-')), recipes = mkdtempSync(j311(tmpdir(), 'sw311d-'));
+  const prev = process.env.SW_MCP_RECIPES_DIR;
+  try {
+    assert.throws(() => sessionRecipe({ action: 'export' }, { root }), /No hay grabación/);
+    assert.equal(sessionRecipe({ action: 'start', name: 'Prueba' }, { root }).recording, true);
+    recordCall(root, 'assembly_new', { path: 'C:\\g\\A.SLDASM', template: 't' }, { ok: true, result: { document_id: 'abc', path: 'C:\\g\\A.SLDASM' } }, 1200);
+    recordCall(root, 'inspect', { document_id: 'abc' }, { ok: true, result: {} }, 10);
+    recordCall(root, 'insert_component', { document_id: 'abc', path: 'C:\\g\\P.SLDPRT', fit_box: { axis: 'x', from_mm: 0, to_mm: 10 } }, { ok: true, result: { component: 'P-1' } }, 900);
+    recordCall(root, 'add_mate', { document_id: 'abc', type: 'coincident' }, { ok: false, error: 'boom' }, 50);
+    const st = sessionRecipe({ action: 'status' }, { root }); assert.equal(st.steps, 4);
+    assert.ok(st.last.every(s => !('document_id' in s.args) || s.args.document_id === '<id del documento>'));
+    assert.ok(st.last.some(s => s.args.document === 'A.SLDASM'));
+  } finally { if (prev === undefined) delete process.env.SW_MCP_RECIPES_DIR; else process.env.SW_MCP_RECIPES_DIR = prev; rmSync(root, { recursive: true, force: true }); rmSync(recipes, { recursive: true, force: true }); }
+});
+test('v3.11: plan accepts fit_box, mate expect, find descriptions and rejects bad ones', () => {
+  const base = { ir: 'assembly-ir/1', name: 'X', components: [{ id: 'A', file: 'a.SLDPRT', fixed: true }, { id: 'B', file: 'sub/b.SLDASM', fit_box: { axis: 'x', from_mm: -10, to_mm: 5 } }],
+    mates: [{ type: 'distance', distance_mm: 5, align: 'aligned', entities: [{ component: 'A', find: { extreme: '+x' } }, { component: 'B', find: { pick: 'largest', kind: 'plane' } }], expect: { component: 'B', origin_mm: [1, 2, 3] } }] };
+  assert.deepEqual(checkAssemblyPlan(base).errors, []);
+  const bad = structuredClone(base); bad.components[1].fit_box = { axis: 'w', from_mm: 5, to_mm: 1 }; bad.mates[0].expect = { component: 'Z', origin_mm: [1] }; bad.mates[0].entities[0].find = { extreme: 'up' }; bad.components[0].file = '../a.SLDPRT';
+  const e = checkAssemblyPlan(bad).errors.join('\n');
+  for (const k of ['fit_box', 'expect', 'find.extreme', 'components[0].file']) assert.match(e, new RegExp(k.replace(/[.[\]]/g, '\\$&')));
+});
+test('v3.11: new tools and options validate', () => {
+  const ok = (t, a) => assert.ok(validate.get(t)(a), t + ' ' + JSON.stringify(validate.get(t).errors));
+  const no = (t, a) => assert.ok(!validate.get(t)(a), t + ' should fail');
+  ok('sw_insert_components', { document_id: 'x', items: [{ path: 'C:\\a.SLDPRT', fit_box: { axis: 'x', from_mm: 0, to_mm: 1 }, fixed: true }] });
+  no('sw_insert_components', { document_id: 'x', items: [] });
+  ok('sw_insert_component', { document_id: 'x', path: 'C:\\a.SLDPRT', fit_box: { axis: 'z', from_mm: -5, to_mm: 5, tolerance_mm: 0.1 } });
+  ok('sw_add_mate', { document_id: 'x', type: 'distance', distance_mm: 2, entities: [{ component: 'a' }, { component: 'b' }], expect: { component: 'b', origin_mm: [0, 0, 1] } });
+  ok('sw_move_component', { document_id: 'x', component: 'a', position_mm: [0, 0, 0], allow_fixed: true });
+  ok('sw_find_faces', { document_id: 'x', component: 'a', extreme: '+z' }); no('sw_find_faces', { document_id: 'x', pick: 'biggest' });
+  ok('sw_drawing_dimension', { document_id: 'x', action: 'auto', sheet: 'Hoja1', view: 'V1', max_circles: 5 });
+  ok('sw_wrap', { document_id: 'x', sketch: 'Croquis2', face_point_mm: [0, 10, 5], type: 'deboss', depth_mm: 0.5 }); no('sw_wrap', { document_id: 'x', sketch: 'S', face_point_mm: [0, 0, 0], type: 'carve' });
+  ok('sw_boundary', { document_id: 'x', profiles: ['A', 'B'], guides: ['G'], cut: false }); no('sw_boundary', { document_id: 'x', profiles: ['A'] });
+  ok('sw_session_recipe', { action: 'export', id: 'mi-receta', notes: 'n' }); no('sw_session_recipe', { action: 'export', id: 'Mal Id' });
+  ok('sw_assembly_build', { action: 'check', plan: {}, keep_open: true });
 });

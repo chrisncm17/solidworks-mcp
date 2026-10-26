@@ -66,6 +66,7 @@ partial class Worker {
     var t=Stopwatch.StartNew();var args=m.Where(kv=>kv.Key!="name"&&kv.Key!="suppressed").ToDictionary(kv=>kv.Key,kv=>kv.Value);args["_quick"]=true;if(defer)args["_norebuild"]=true;
     // plan ids -> real component names
     args["entities"]=Items(m["entities"]).Select(o=>{var e=((Dictionary<string,object>)o).ToDictionary(kv=>kv.Key,kv=>kv.Value);if(e.ContainsKey("component")){string cid=Str(e,"component");if(names.ContainsKey(cid))e["component"]=names[cid];}return (object)e;}).ToList();
+    if(args.ContainsKey("expect")){var ex=((Dictionary<string,object>)args["expect"]).ToDictionary(kv=>kv.Key,kv=>kv.Value);string ecid=Str(ex,"component");if(names.ContainsKey(ecid))ex["component"]=names[ecid];args["expect"]=ex;}
     string label=m.ContainsKey("name")?Str(m,"name"):("#"+i);
     try{
      // v3.7: entities described by the drawing ({component, find:{cylinder Ø / plane normal}}) become local points here

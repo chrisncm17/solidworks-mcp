@@ -1,6 +1,6 @@
 # Tools
 
-106 tools. Generated from `server/tools.mjs` by `npm run tools` - do not edit by hand.
+112 tools. Generated from `server/tools.mjs` by `npm run tools` - do not edit by hand.
 
 ## Session and documents
 
@@ -730,6 +730,7 @@ Add a mate (relación): coincident, concentric, distance (distance_mm), parallel
 | `distance_max_mm` | number (>= 0, <= 10000) |  |  |
 | `pitch_mm` | number (> 0, <= 1000) |  |  |
 | `lock_rotation` | boolean |  |  |
+| `expect` | object |  | v3.11 where the moved component ORIGIN must end (assembly mm). If the mate lands on the other side it is retried flipped once; if still wrong it is deleted and the call fails with both positions. |
 | `keep_broken` | boolean |  | Keep the result even if it breaks other features/mates (default: it is undone automatically and verified). sw_save then refuses to save until fixed. |
 
 ### `sw_assembly_batch`
@@ -763,6 +764,7 @@ Batch assembly compiler. check validates without SolidWorks. build uses parts_di
 | `reuse_parts` | boolean |  | plan.parts: reuse a part whose IR is unchanged (0 s). false builds every part again from zero. |
 | `answers` | object |  | v3.8 one call: after the build also run sw_answer_sheet with these options (create, mass_units, length_units, decimals). |
 | `tolerance_percent` | number (> 0, <= 50) |  |  |
+| `keep_open` | boolean |  | v3.11: do not close hidden saved leftovers at the end (default: they are closed to keep SolidWorks fast) |
 
 ### `sw_assembly_diff` (read-only)
 
@@ -970,7 +972,7 @@ Exploded view (vista explosionada) of the active configuration of a managed asse
 
 ### `sw_find_faces` (read-only)
 
-Read-only: faces of an assembly component described like the drawing says, instead of a point: kind cylinder (diameter_mm, axis) or plane (normal outward, offset_mm), near_mm (PART coordinates) to rank, tol_mm (default 0.02). Returns candidates with an interior local_point_mm on that face only. In sw_assembly_build plans use {component, find:{...}} or intents (insert/face_to_face/flush/coaxial).
+Read-only: faces of an assembly component described like the drawing says, instead of a point: kind cylinder (diameter_mm, axis) or plane (normal outward, offset_mm), near_mm (PART coordinates) to rank, tol_mm (default 0.02). Descriptions instead of numbers (v3.11): extreme +z (top face), inclined, feature name, pick largest\|smallest\|outermost. Returns candidates with an interior local_point_mm on that face only. In sw_assembly_build plans use {component, find:{...}} or intents (insert/face_to_face/flush/coaxial).
 
 | Option | Type / values | Required | Notes |
 |---|---|---|---|
@@ -983,6 +985,10 @@ Read-only: faces of an assembly component described like the drawing says, inste
 | `offset_mm` | number |  |  |
 | `near_mm` | array of number (3) |  |  |
 | `tol_mm` | number (> 0, <= 10) |  |  |
+| `extreme` | `+x` \\| `-x` \\| `+y` \\| `-y` \\| `+z` \\| `-z` |  | v3.11 the outermost plane facing that part axis (+z = the top face) |
+| `inclined` | boolean |  | v3.11 only faces NOT aligned with a part axis (chamfers, sloped faces, inclined holes) |
+| `feature` | string |  | v3.11 only faces made by this feature (tree name) |
+| `pick` | `largest` \\| `smallest` \\| `outermost` |  | v3.11 order the matches and take the first: by area, or largest diameter / farthest plane |
 
 ### `sw_find_origin`
 
@@ -1012,6 +1018,17 @@ Insert a part or subassembly (absolute path) into an assembly with its ORIGIN at
 | `fixed` | boolean |  |  |
 | `transform` | array of number (16) |  |  |
 | `configuration` | string |  |  |
+| `fit_box` | object |  | v3.11 place by the component box: along axis (assembly x\|y\|z) the component (with its rotation) spans from_mm..to_mm; its length must match (tolerance_mm, default 0.05) or nothing is inserted. Replaces that coordinate of position_mm/transform. |
+| `keep_broken` | boolean |  | Keep the result even if it breaks other features/mates (default: it is undone automatically and verified). sw_save then refuses to save until fixed. |
+
+### `sw_insert_components`
+
+v3.11 several components in ONE call (no full tree per insert): items [{path, position_mm \| transform \| fit_box, fixed, configuration}]. Returns each component name, the assembly mass and center of mass. If one item fails, the ones this call inserted are removed. Unsaved until sw_save.
+
+| Option | Type / values | Required | Notes |
+|---|---|---|---|
+| `document_id` | string | yes |  |
+| `items` | array of object | yes |  |
 | `keep_broken` | boolean |  | Keep the result even if it breaks other features/mates (default: it is undone automatically and verified). sw_save then refuses to save until fixed. |
 
 ### `sw_interference`
@@ -1059,6 +1076,7 @@ Place an UNDER-DEFINED assembly component: its origin at position_mm and rotatio
 | `position_mm` | array of number (>= -100000, <= 100000) (3) | yes |  |
 | `rotation_deg` | array of number (>= -360, <= 360) (3) |  |  |
 | `axes` | array of number (>= -1, <= 1) (9) |  |  |
+| `allow_fixed` | boolean |  | v3.11: move a FIXED top-level component (it is unfixed, placed and fixed again) |
 | `keep_broken` | boolean |  | Keep the result even if it breaks other features/mates (default: it is undone automatically and verified). sw_save then refuses to save until fixed. |
 
 ### `sw_replace_component`
@@ -1154,6 +1172,24 @@ Add the MODEL dimensions to drawing views (Insert Model Items: dimensions marked
 | `views` | array of string |  |  |
 | `keep_broken` | boolean |  | Keep the result even if it breaks other features/mates (default: it is undone automatically and verified). sw_save then refuses to save until fixed. |
 
+### `sw_drawing_dimension`
+
+v3.10 Manual dimensions on a managed DRAWING view (Cota inteligente). action probe: the visible edges of sheet+view, each with an index, kind (line, circle, arc, curve), length or diameter, ends/centre in MODEL mm and on the SHEET mm (kind filters, max_edges limits). action add: edges = one index (length of a line, diameter/radius of a circle) or two (distance between lines, angle); type smart (default, SolidWorks picks), horizontal, vertical, diameter, radius, angle; position_mm = text position on the sheet (default 12 mm outside the edge). Returns the measured value (mm or deg). v3.11 action auto: for geometry without model dimensions (imported STEP/DXF), overall width and height from the outermost straight edges plus one diameter per distinct circle size (with its count). Indexes are valid until the view or model changes. Unsaved until sw_save.
+
+| Option | Type / values | Required | Notes |
+|---|---|---|---|
+| `document_id` | string | yes |  |
+| `action` | `probe` \\| `add` \\| `auto` | yes |  |
+| `max_circles` | integer (>= 1, <= 100) |  | auto: at most this many distinct circle sizes (default 12) |
+| `sheet` | string | yes |  |
+| `view` | string | yes |  |
+| `kind` | `line` \\| `circle` \\| `arc` \\| `curve` |  |  |
+| `max_edges` | integer (>= 1, <= 1000) |  |  |
+| `edges` | array of integer (>= 0, <= 100000) |  |  |
+| `type` | `smart` \\| `horizontal` \\| `vertical` \\| `diameter` \\| `radius` \\| `angle` |  |  |
+| `position_mm` | array of number (>= -5000, <= 5000) (2) |  |  |
+| `keep_broken` | boolean |  | Keep the result even if it breaks other features/mates (default: it is undone automatically and verified). sw_save then refuses to save until fixed. |
+
 ### `sw_drawing_new`
 
 Low-level, used by sw_assembly_drawing: empty drawing from a DRWDOT template with a width_mm x height_mm sheet, saved at an absolute path inside generated/drawings (never overwritten).
@@ -1225,12 +1261,13 @@ Sheets of a managed DRAWING. action list. action add (new sheet) / setup (existi
 
 ### `sw_drawing_views`
 
-DRAWING sheets and views. action=list: every sheet (size mm, sheet scale) with its views (model, orientation, scale, display mode, exploded, outline mm, dimension/balloon/note counts). action=set: on one sheet+view change scale (decimal, e.g. 0.25 = 1:4), display (shaded = mode 3 with edges, hidden_lines_removed, hidden_greyed, wireframe) and/or center_mm [x,y] on the sheet; attached dimensions and notes move and scale with the view. action=fix_sheet_scale: set every sheet scale to 1:1 keeping each view scale (inserting views changes the sheet scale and shrinks frames/title blocks). action=section (v3.9): section view of sheet+view cut by a straight line, direction horizontal or vertical on the sheet, through_mm = a point in MODEL coordinates the cut passes through (e.g. a hole centre; default the middle of the view), label (default next free letter), position_mm of the new view on the sheet (default beside the parent), flip reverses the viewing direction. Unsaved until sw_save.
+DRAWING sheets and views. action=list: every sheet (size mm, sheet scale) with its views (model, orientation, scale, display mode, exploded, outline mm, dimension/balloon/note counts). action=set: on one sheet+view change scale (decimal, e.g. 0.25 = 1:4), display (shaded = mode 3 with edges, hidden_lines_removed, hidden_greyed, wireframe) and/or center_mm [x,y] on the sheet; attached dimensions and notes move and scale with the view. action=fix_sheet_scale: set every sheet scale to 1:1 keeping each view scale (inserting views changes the sheet scale and shrinks frames/title blocks). action=section (v3.9): section view of sheet+view cut by a straight line, direction horizontal or vertical on the sheet, through_mm = a point in MODEL coordinates the cut passes through (e.g. a hole centre; default the middle of the view), label (default next free letter), position_mm of the new view on the sheet (default beside the parent), flip reverses the viewing direction. action=detail (v3.10): detail view (vista de detalle) of sheet+view: a circle of radius_mm (MODEL mm) around through_mm (MODEL point; default the middle of the view), magnified to scale (default twice the parent scale, e.g. 2 = 2:1), label (default next free letter), position_mm or the nearest free spot of the sheet. Unsaved until sw_save.
 
 | Option | Type / values | Required | Notes |
 |---|---|---|---|
 | `document_id` | string | yes |  |
-| `action` | `list` \\| `set` \\| `fix_sheet_scale` \\| `section` | yes |  |
+| `action` | `list` \\| `set` \\| `fix_sheet_scale` \\| `section` \\| `detail` | yes |  |
+| `radius_mm` | number (> 0, <= 10000) |  |  |
 | `through_mm` | array of number (>= -100000, <= 100000) (3) |  |  |
 | `direction` | `horizontal` \\| `vertical` |  |  |
 | `label` | string |  |  |
@@ -1257,6 +1294,33 @@ Measurement sheet (ficha de medidas) of ONE part read from a drawing. Every entr
 | `keep_broken` | boolean |  | Keep the result even if it breaks other features/mates (default: it is undone automatically and verified). sw_save then refuses to save until fixed. |
 
 ## Verification, export and delivery
+
+### `sw_boundary`
+
+v3.11 Recubrir por limite (Boundary boss/cut): like sw_loft but each profile influences the whole shape, giving smoother transitions; profiles = 2-10 closed sketches in order (different planes), guides = optional open sketches in the second direction that touch every profile; cut=true removes material; merge defaults true. Returns volume before/after. Unsaved until sw_save. EXPERIMENTAL: in SolidWorks 2026 SP3.2 the API returned null for profiles that sw_loft accepts (tested); if it fails, use sw_loft with the same sketches.
+
+| Option | Type / values | Required | Notes |
+|---|---|---|---|
+| `document_id` | string | yes |  |
+| `profiles` | array of string | yes |  |
+| `guides` | array of string |  |  |
+| `cut` | boolean |  |  |
+| `merge` | boolean |  |  |
+| `keep_broken` | boolean |  | Keep the result even if it breaks other features/mates (default: it is undone automatically and verified). sw_save then refuses to save until fixed. |
+
+### `sw_combine`
+
+v3.10 Combinar bodies of a multibody managed part (Insertar > Operaciones > Combinar). operation add (merge into one), subtract (main body minus tool bodies) or common (keep only the shared volume). Pick bodies by a point ON one of their faces (main_point_mm, tool_points_mm, part mm) or by index (main_index, tool_indexes, order of sw_inspect bodies). subtract needs the main body; tools default to every other body. add/common default to all bodies. Returns bodies and volume before/after. Unsaved until sw_save.
+
+| Option | Type / values | Required | Notes |
+|---|---|---|---|
+| `document_id` | string | yes |  |
+| `operation` | `add` \\| `subtract` \\| `common` | yes |  |
+| `main_point_mm` | array of number (>= -100000, <= 100000) (3) |  |  |
+| `main_index` | integer (>= 0, <= 10000) |  |  |
+| `tool_points_mm` | array of array of number (>= -100000, <= 100000) (3) |  |  |
+| `tool_indexes` | array of integer (>= 0, <= 10000) |  |  |
+| `keep_broken` | boolean |  | Keep the result even if it breaks other features/mates (default: it is undone automatically and verified). sw_save then refuses to save until fixed. |
 
 ### `sw_compare_volume` (read-only)
 
@@ -1349,11 +1413,29 @@ Read-only comparison of a managed PART against an original .SLDPRT (absolute pat
 
 ### `sw_preview`
 
-Create an isometric PNG preview of a managed part/assembly or fit the current drawing sheet. Changes view/selection and writes a uniquely named preview file.
+PNG preview(s) returned as images: a managed part/assembly in one or more standard views (views, default [iso]) or the whole current drawing sheet. v3.10 label_faces (parts): every visible face gets a number on the pictures and faces[] gives, per number, its kind (plane, cylinder...), area, diameter and point_mm, a point ON that face (part mm) to pass as face_point_mm / point_mm to other tools; hidden faces are not labelled. Changes the view orientation; writes uniquely named files.
 
 | Option | Type / values | Required | Notes |
 |---|---|---|---|
 | `document_id` | string | yes |  |
+| `views` | array of `iso` \\| `front` \\| `back` \\| `left` \\| `right` \\| `top` \\| `bottom` \\| `trimetric` \\| `dimetric` |  |  |
+| `label_faces` | boolean |  |  |
+| `max_labels` | integer (>= 1, <= 150) |  |  |
+
+### `sw_session_recipe` (read-only)
+
+v3.11 Record what this session does and turn it into a recipe the next chat can follow (MCP resource solidworks://recipe/<id>). start {name}: from now on every successful call that changes something is noted (inspections and previews are left out; document ids become file names). status: steps so far. export {id?, name?, description?, notes?, overwrite?, keep_recording?}: writes recipes/<id>.md with the steps (JSON arguments ready to reuse) and what failed. stop: discard the recording.
+
+| Option | Type / values | Required | Notes |
+|---|---|---|---|
+| `action` | `start` \\| `status` \\| `stop` \\| `export` | yes |  |
+| `name` | string |  |  |
+| `id` | string |  |  |
+| `description` | string |  |  |
+| `notes` | string |  |  |
+| `overwrite` | boolean |  |  |
+| `keep_recording` | boolean |  |  |
+| `restart` | boolean |  |  |
 
 ### `sw_topology` (read-only)
 
@@ -1362,3 +1444,18 @@ Inspect faces and unique edges with short-lived selection references. Coordinate
 | Option | Type / values | Required | Notes |
 |---|---|---|---|
 | `document_id` | string | yes |  |
+
+### `sw_wrap`
+
+v3.11 Envolver: wrap a closed sketch onto a face of the part. sketch = sketch on a plane parallel or tangent to the face; face_point_mm = a point ON the target face (part mm, e.g. from sw_find_faces or sw_preview label_faces); type emboss (raised, default), deboss (engraved) or scribe (split lines only, no depth); depth_mm for emboss/deboss; reverse flips the side; method analytical (cylinders, cones, extruded faces; default) or spline (any face). Returns volume before/after. Unsaved until sw_save. EXPERIMENTAL: in SolidWorks 2026 SP3.2 the API returned null for profiles that sw_loft accepts (tested); if it fails, use sw_loft with the same sketches.
+
+| Option | Type / values | Required | Notes |
+|---|---|---|---|
+| `document_id` | string | yes |  |
+| `sketch` | string | yes | Optional for new features: omit it to keep the SolidWorks default tree name (features are never renamed). Required when referring to an existing feature or sketch. |
+| `face_point_mm` | array of number (>= -100000, <= 100000) (3) | yes |  |
+| `type` | `emboss` \\| `deboss` \\| `scribe` |  |  |
+| `depth_mm` | number (> 0, <= 1000) |  |  |
+| `reverse` | boolean |  |  |
+| `method` | `analytical` \\| `spline` |  |  |
+| `keep_broken` | boolean |  | Keep the result even if it breaks other features/mates (default: it is undone automatically and verified). sw_save then refuses to save until fixed. |

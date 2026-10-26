@@ -139,6 +139,21 @@ partial class Worker {
    // the component document must be open for AddComponent5
    int e=0,w=0;var cd=(IModelDoc2)sw.GetOpenDocumentByName(path);bool opened=false;if(cd==null){cd=(IModelDoc2)sw.OpenDoc6(path,ext==".sldprt"?1:2,1,"",ref e,ref w);opened=cd!=null;if(opened&&batchOpened!=null)batchOpened.Add(cd);}
    if(cd==null)throw new Exception("Cannot open component "+path+" ("+e+")");
+   // v3.11 fit_box: "this part goes from x=-225 to -209.5" — the translation along that axis comes from the component's own box
+   // (after the requested rotation) instead of hand computing where its origin lands; the length must match the span.
+   object fitted=null;
+   if(a.ContainsKey("fit_box")){var fb=(Dictionary<string,object>)a["fit_box"];int k="xyz".IndexOf(Str(fb,"axis").ToLowerInvariant());if(k<0)throw new Exception("fit_box.axis must be x, y or z");
+    double from=Num(fb,"from_mm"),to=Num(fb,"to_mm"),tolb=fb.ContainsKey("tolerance_mm")?Num(fb,"tolerance_mm"):0.05;if(to<=from)throw new Exception("fit_box: to_mm must be greater than from_mm");
+    var box=ext==".sldprt"?(double[])((IPartDoc)cd).GetPartBox(true):(double[])((IAssemblyDoc)cd).GetBox(0);
+    var R=initial??new double[]{1,0,0,0,1,0,0,0,1,0,0,0,1,0,0,0};double lo=double.MaxValue,hi=double.MinValue;
+    // GetPartBox is loose (a 10 mm block read 10.09, tested): parts use the bodies' exact extreme points along that world axis
+    double dx=R[k],dy=R[3+k],dz=R[6+k];
+    if(ext==".sldprt")foreach(var bo in (object[])((IPartDoc)cd).GetBodies2(0,true)??new object[0]){double x,y,z;var b2=(IBody2)bo;
+     if(b2.GetExtremePoint(dx,dy,dz,out x,out y,out z))hi=Math.Max(hi,(x*dx+y*dy+z*dz)*1000);
+     if(b2.GetExtremePoint(-dx,-dy,-dz,out x,out y,out z))lo=Math.Min(lo,(x*dx+y*dy+z*dz)*1000);}
+    if(hi<lo)for(int cx=0;cx<2;cx++)for(int cy=0;cy<2;cy++)for(int cz=0;cz<2;cz++){double[] q={box[cx*3],box[1+cy*3],box[2+cz*3]};double wv=(q[0]*R[k]+q[1]*R[3+k]+q[2]*R[6+k])*1000;lo=Math.Min(lo,wv);hi=Math.Max(hi,wv);}
+    if(Math.Abs((hi-lo)-(to-from))>tolb){if(opened)try{sw.CloseDoc(cd.GetTitle());}catch{}throw new Exception("fit_box: the component is "+Math.Round(hi-lo,4)+" mm long along "+"xyz"[k]+" with this rotation, the span is "+Math.Round(to-from,4)+" mm (nothing inserted)");}
+    p[k]=from-lo;if(initial!=null)initial[9+k]=p[k]/1000;fitted=new{axis="xyz"[k].ToString(),from_mm=from,to_mm=to,length_mm=Math.Round(hi-lo,4),origin_mm=Math.Round(p[k],4)};}
    string configuration=a.ContainsKey("configuration")?Str(a,"configuration"):null;
    if(configuration!=null&&!((object[])cd.GetConfigurationNames()??new object[0]).Select(Convert.ToString).Contains(configuration)){if(opened)sw.CloseDoc(cd.GetTitle());throw new Exception("Component configuration not found: "+configuration);}
    // v3.8 speed: inside assembly_batch every file was opened beforehand and the assembly stays active (re-activating it on
@@ -156,7 +171,20 @@ partial class Worker {
     var actual=c.Transform2 as IMathTransform;if(actual==null||MaxDiff((double[])actual.ArrayData,want)>1e-8)throw new Exception("Inserted component did not retain the requested transform");}}
    bool fix=Flag(a,"fixed");d.ClearSelection2(true);if(c.Select4(false,null,false)){if(fix)asm.FixComponent();else if(c.IsFixed())asm.UnfixComponent();}d.ClearSelection2(true);
    if(c.IsFixed()!=fix)throw new Exception("Cannot set inserted component fixed state");
-   result=new{component=c.Name2,fixed_position=c.IsFixed(),inspection=Flag(a,"_quick")?null:Inspect(d)};return true;
+   result=new{component=c.Name2,fixed_position=c.IsFixed(),fit_box=fitted,inspection=Flag(a,"_quick")?null:Inspect(d)};return true;
+  }
+  // v3.11 several components in one call (the jet engine rotor: 12 parts = 12 calls with the whole tree each); one rebuild check,
+  // one short answer. A failure removes the components this call already inserted.
+  if(op=="insert_components"){
+   if(d.GetType()!=2)throw new Exception("insert_components needs an assembly");var asm=(IAssemblyDoc)d;
+   var items=Items(a["items"]).Cast<Dictionary<string,object>>().ToList();var done=new List<object>();var names=new List<string>();
+   foreach(var it in items){var ai=new Dictionary<string,object>(it);ai["document_id"]=a["document_id"];ai["_quick"]=true;object r;
+    try{TryAssembly2("insert_component",ai,d,out r);}
+    catch(Exception ex){foreach(var n in names){d.ClearSelection2(true);var cc=((object[])asm.GetComponents(true)??new object[0]).Cast<IComponent2>().FirstOrDefault(x=>x.Name2==n);if(cc!=null&&cc.Select4(false,null,false))d.Extension.DeleteSelection2(0);}d.ClearSelection2(true);d.EditRebuild3();
+     throw new Exception("item "+done.Count+" ("+Path.GetFileName(Str(it,"path"))+"): "+ex.Message+(names.Count>0?" | removed the "+names.Count+" inserted before it":""));}
+    var nm=Convert.ToString(r.GetType().GetProperty("component").GetValue(r,null));names.Add(nm);done.Add(r);}
+   var mp=(IMassProperty)d.Extension.CreateMassProperty();
+   result=new{inserted=done.ToArray(),count=done.Count,mass_g=Math.Round(mp.Mass*1000,3),center_of_mass_mm=((double[])mp.CenterOfMass).Select(v=>Math.Round(v*1000,4)).ToArray(),note="Unsaved until sw_save."};return true;
   }
   // v3.8 speed: inside assembly_batch the mate names are kept in batchMates (each mate used to walk every mate twice: ~350 ms
   // late in a 23-mate batch); outside a batch it is null and add_mate reads them as before
@@ -201,13 +229,36 @@ partial class Worker {
    if(a.ContainsKey("angle_min_deg")||a.ContainsKey("angle_max_deg")||a.ContainsKey("distance_min_mm")||a.ContainsKey("distance_max_mm"))
     try{var md=f.GetDefinition();var am=md as IAngleMateFeatureData;var dm=md as IDistanceMateFeatureData;
      limits=am!=null?(object)new{min_deg=Math.Round(am.MinimumAngle*180/Math.PI,6),max_deg=Math.Round(am.MaximumAngle*180/Math.PI,6),angle_deg=Math.Round(am.Angle*180/Math.PI,6)}:dm!=null?(object)new{min_mm=Math.Round(dm.MinimumDistance*1000,6),max_mm=Math.Round(dm.MaximumDistance*1000,6),distance_mm=Math.Round(dm.Distance*1000,6)}:null;}catch{}
+   // v3.11 expect: where the moved component's origin must end up. A distance/coincident mate that picked the other side (the
+   // jet engine intake: bearing, lock plate and bolts on -X inside the compression turbine) is retried flipped once; if neither
+   // side gives the expected origin the mate is deleted and the call fails with both positions.
+   if(a.ContainsKey("expect")&&f!=null){var ex=(Dictionary<string,object>)a["expect"];string ec=Str(ex,"component");
+    var eo=Items(ex["origin_mm"]).Select(Convert.ToDouble).ToArray();double tol=ex.ContainsKey("tolerance_mm")?Num(ex,"tolerance_mm"):0.05;
+    Func<Dictionary<string,double[]>,double[]> at=T=>{if(!T.ContainsKey(ec))throw new Exception("expect.component not found: "+ec);return T[ec].Skip(9).Take(3).Select(v=>v*1000).ToArray();};
+    Func<double[],bool> near=o=>Enumerable.Range(0,3).All(i=>Math.Abs(o[i]-eo[i])<=tol);
+    var got=at(tAfter);
+    if(!near(got)){
+     Action undo=()=>{d.ClearSelection2(true);var mf=Mates(d).FirstOrDefault(x=>x.Name==f.Name);if(mf!=null&&mf.Select2(false,0))d.Extension.DeleteSelection2(0);d.ClearSelection2(true);
+      foreach(var kv in tBefore){var cc=((object[])asm.GetComponents(false)??new object[0]).Cast<IComponent2>().FirstOrDefault(x=>x.Name2==kv.Key);if(cc!=null&&!cc.IsFixed()&&MaxDiff((double[])((MathTransform)cc.Transform2).ArrayData,kv.Value)>1e-9)cc.Transform2=(MathTransform)((IMathUtility)sw.GetMathUtility()).CreateTransform(kv.Value);}
+      d.EditRebuild3();};
+     if(Flag(a,"_expect_retry")){undo();throw new Exception("expect: "+ec+" origin "+string.Join(",",got.Select(v=>Math.Round(v,3)))+" mm, expected "+string.Join(",",eo)+" (± "+tol+")");}
+     undo();if(batchMates!=null)batchMates.Remove(f.Name);
+     var a2=new Dictionary<string,object>(a);a2["flip"]=!Flag(a,"flip");a2["_expect_retry"]=true;
+     object r2;try{TryAssembly2("add_mate",a2,d,out r2);}catch(Exception rex){throw new Exception("expect: first side gave "+ec+" at "+string.Join(",",got.Select(v=>Math.Round(v,3)))+" mm; flipped: "+rex.Message);}
+     result=new{flipped_for_expect=true,first_try_origin_mm=got.Select(v=>Math.Round(v,4)).ToArray(),mate_result=r2};return true;}
+   }
    result=new{mate=f==null?null:f.Name,type=type,error_code=code,is_warning=warn,moved_components=moved,limits=limits,snapped=snaps.Count>0?snaps:null,inspection=Flag(a,"_quick")?null:Inspect(d),split_ms=tm};return true;
   }
   if(op=="move_component"){
    // Place an under-defined component: origin at position_mm and rotation rotation_deg [rx,ry,rz] (applied X then Y then Z, world axes).
    if(d.GetType()!=2)throw new Exception("move_component needs an assembly");var asm=(IAssemblyDoc)d;
    var c=((object[])asm.GetComponents(false)??new object[0]).Cast<IComponent2>().FirstOrDefault(x=>x.Name2==Str(a,"component"));if(c==null)throw new Exception("component not found: "+Str(a,"component"));
-   if(c.IsFixed())throw new Exception(c.Name2+" is fixed; unfix it first");
+   // v3.11 allow_fixed: a fixed top-level component is unfixed, placed and fixed again (fixed parts placed by transform)
+   bool refix=false;
+   if(c.IsFixed()){if(!Flag(a,"allow_fixed"))throw new Exception(c.Name2+" is fixed; pass allow_fixed:true to move it (it stays fixed at the new place)");
+    if(c.Name2.Contains("/"))throw new Exception("allow_fixed works on top-level components only");
+    d.ClearSelection2(true);if(!c.Select4(false,null,false))throw new Exception("Cannot select "+c.Name2);asm.UnfixComponent();d.ClearSelection2(true);
+    if(c.IsFixed())throw new Exception("Could not unfix "+c.Name2);refix=true;}
    var p=Items(a["position_mm"]).Select(v=>Convert.ToDouble(v)/1000).ToArray();var r=a.ContainsKey("rotation_deg")?Items(a["rotation_deg"]).Select(v=>Convert.ToDouble(v)*Math.PI/180).ToArray():new double[3];
    Func<double,double[,]> Rx=t=>new double[,]{{1,0,0},{0,Math.Cos(t),-Math.Sin(t)},{0,Math.Sin(t),Math.Cos(t)}},Ry=t=>new double[,]{{Math.Cos(t),0,Math.Sin(t)},{0,1,0},{-Math.Sin(t),0,Math.Cos(t)}},Rz=t=>new double[,]{{Math.Cos(t),-Math.Sin(t),0},{Math.Sin(t),Math.Cos(t),0},{0,0,1}};
    Func<double[,],double[,],double[,]> Mul=(A,B)=>{var C=new double[3,3];for(int i=0;i<3;i++)for(int j=0;j<3;j++)for(int k=0;k<3;k++)C[i,j]+=A[i,k]*B[k,j];return C;};
@@ -220,8 +271,9 @@ partial class Worker {
     for(int i=0;i<3;i++)for(int j=i+1;j<3;j++){double dot=arr[3*i]*arr[3*j]+arr[3*i+1]*arr[3*j+1]+arr[3*i+2]*arr[3*j+2];if(Math.Abs(dot)>1e-6)throw new Exception("axes must be mutually perpendicular");}
     double det=arr[0]*(arr[4]*arr[8]-arr[5]*arr[7])-arr[1]*(arr[3]*arr[8]-arr[5]*arr[6])+arr[2]*(arr[3]*arr[7]-arr[4]*arr[6]);if(det<0.999999)throw new Exception("axes must be a rotation (right-handed, determinant +1), not a mirror");}
    var mu=(IMathUtility)sw.GetMathUtility();c.Transform2=(MathTransform)mu.CreateTransform(arr);d.EditRebuild3();
+   if(refix){d.ClearSelection2(true);c.Select4(false,null,false);asm.FixComponent();d.ClearSelection2(true);d.EditRebuild3();if(!c.IsFixed())throw new Exception("Moved but could not fix "+c.Name2+" again");}
    var now=(double[])((MathTransform)c.Transform2).ArrayData;
-   result=new{component=c.Name2,origin_mm=now.Skip(9).Take(3).Select(v=>Math.Round(v*1000,4)).ToArray(),held_by_mates=MaxDiff(now,arr)>1e-6,note=MaxDiff(now,arr)>1e-6?"Existing mates moved it away from the requested placement (it is constrained).":"Placed.",inspection=Inspect(d)};return true;
+   result=new{component=c.Name2,refixed=refix,origin_mm=now.Skip(9).Take(3).Select(v=>Math.Round(v*1000,4)).ToArray(),held_by_mates=MaxDiff(now,arr)>1e-6,note=MaxDiff(now,arr)>1e-6?"Existing mates moved it away from the requested placement (it is constrained).":"Placed.",inspection=Inspect(d)};return true;
   }
   if(op=="configuration"){
    // list configurations or activate one (parts and assemblies); activation is a document change (unsaved until sw_save)

@@ -2,7 +2,7 @@
 
 ![SolidWorks MCP: agentes de IA que modelan, ensamblan, verifican y hacen planos en SOLIDWORKS](docs/images/social_preview.png)
 
-**Un agente de IA que modela, ensambla, verifica y hace planos en SolidWorks.** Servidor [MCP](https://modelcontextprotocol.io) para SolidWorks en Windows con 106 herramientas: piezas desde una receta corta, ensambles completos en una llamada, masa y centro de masa exactos, planos con BOM, globos y cortes, y lectura de planos PDF/DXF. Siempre con respaldos y reversión verificada: tus archivos no se rompen.
+**Un agente de IA que modela, ensambla, verifica y hace planos en SolidWorks.** Servidor [MCP](https://modelcontextprotocol.io) para SolidWorks en Windows con 112 herramientas: piezas desde una receta corta, ensambles completos en una llamada, masa y centro de masa exactos, planos con BOM, globos y cortes, y lectura de planos PDF/DXF. Siempre con respaldos y reversión verificada: tus archivos no se rompen.
 
 Funciona con **Claude Desktop, Claude Code, OpenAI Codex (CLI / IDE)** y cualquier cliente MCP que pueda lanzar un servidor local (stdio).
 
@@ -25,6 +25,8 @@ cd solidworks-mcp
 npm install
 npm run build
 npm test
+# o todo en una línea (requisitos, compilación, pruebas y registro en Claude Desktop, Claude Code y Codex; -WhatIf solo muestra):
+# powershell -ExecutionPolicy Bypass -File install.ps1
 ```
 Luego agrega el servidor a tu cliente (Claude Desktop, Claude Code, Codex): [docs/INSTALL.md](docs/INSTALL.md). Lista completa de herramientas y opciones: [docs/TOOLS.md](docs/TOOLS.md).
 

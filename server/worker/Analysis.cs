@@ -51,6 +51,10 @@ partial class Worker {
   }
   if(op=="pack_and_go"){
    if(d.GetType()==(int)swDocumentTypes_e.swDocPART)throw new Exception("pack_and_go is for assemblies and drawings");
+   // v3.11: reopening an assembly whose component was replaced flags it modified with nothing changed (tested): inside the
+   // managed folder, not blocked (interference/recovery) and with clean health it is saved here like the references below
+   bool mainSaved=false;
+   if(d.GetSaveFlag()&&InsideRoot(d.GetPathName())&&!recoveryPending.Contains(d.GetPathName()))try{Checked(d,true,false);if(HealthProblems(Health(d,true)).Count==0){int e0=0,w0=0;mainSaved=d.Save3(1,ref e0,ref w0)&&e0==0&&!d.GetSaveFlag();if(mainSaved&&DiskRestore().Remove(d.GetPathName()))SaveDiskRestore();}}catch{}
    if(d.GetSaveFlag())throw new Exception("Save the document first (sw_save); Pack and Go copies the saved files");
    string folder=Str(a,"folder_name");if(folder.IndexOfAny(Path.GetInvalidFileNameChars())>=0||folder.Trim('.',' ')!=folder||folder.Length==0)throw new Exception("folder_name must be a simple folder name");
    Directory.CreateDirectory(PackRoot);string dest=Path.GetFullPath(Path.Combine(PackRoot,folder));
@@ -59,7 +63,13 @@ partial class Worker {
    var pg=(PackAndGo)d.Extension.GetPackAndGo();pg.IncludeDrawings=false;pg.IncludeSimulationResults=false;pg.IncludeToolboxComponents=true;pg.FlattenToSingleFolder=true;
    object names;pg.GetDocumentNames(out names);var files=((string[])names??new string[0]).ToArray();
    if(files.Length==0)throw new Exception("Pack and Go returned no documents; nothing was copied");
-   var dirtyRefs=DirtyOpen(files);if(dirtyRefs.Length>0)throw new Exception("Save these open documents first; Pack and Go copies saved files only: "+string.Join(", ",dirtyRefs));
+   // v3.11: references inside the managed folder flagged modified only by a rebuild are saved here (after a clean health check);
+   // anything outside the managed folder, blocked by an interference check, or with problems still stops the package.
+   var autoSaved=new List<string>();if(mainSaved)autoSaved.Add(Path.GetFileName(d.GetPathName()));
+   foreach(var f in files){var od=sw.GetOpenDocumentByName(f) as IModelDoc2;if(od==null||!od.GetSaveFlag()||ReferenceEquals(od,d))continue;
+    string fp=od.GetPathName();if(!InsideRoot(fp)||recoveryPending.Contains(fp))continue;
+    try{Checked(od,true,false);if(HealthProblems(Health(od,true)).Count>0)continue;int e1=0,w1=0;if(od.Save3(1,ref e1,ref w1)&&e1==0){autoSaved.Add(Path.GetFileName(fp));if(DiskRestore().Remove(fp))SaveDiskRestore();}}catch{}}
+   var dirtyRefs=DirtyOpen(files);if(dirtyRefs.Length>0)throw new Exception("Save these open documents first; Pack and Go copies saved files only: "+string.Join(", ",dirtyRefs)+(autoSaved.Count>0?" (saved automatically: "+string.Join(", ",autoSaved)+")":""));
    var clash=files.GroupBy(f=>Path.GetFileName(f),StringComparer.OrdinalIgnoreCase).Where(g=>g.Count()>1).Select(g=>g.Key).ToArray();
    if(clash.Length>0)throw new Exception("Flattening would merge different files with the same name: "+string.Join(", ",clash));
    NoLinks(PackRoot);
@@ -77,7 +87,7 @@ partial class Worker {
    string zip=null;if(a.ContainsKey("zip")&&Convert.ToBoolean(a["zip"])&&verified){zip=dest+".zip";System.IO.Compression.ZipFile.CreateFromDirectory(dest,zip,System.IO.Compression.CompressionLevel.Optimal,true);}
    long bytes=Directory.GetFiles(dest).Sum(f=>new FileInfo(f).Length);
    result=new{destination=dest,main_document=main,files_copied=Directory.GetFiles(dest).Length,size_mb=Math.Round(bytes/1048576.0,1),failed=failed,references=refs.Count,references_missing_in_package=missing,stored_paths_pointing_elsewhere=storedOutside,zip=zip,zip_mb=zip==null?(double?)null:Math.Round(new FileInfo(zip).Length/1048576.0,1),
-    ok=verified,isolated_open_verified=false,note="ok = every document copied and every referenced file present (non-empty) in the package. An isolated open was NOT performed: close documents with the same names and open the packed main file to confirm. stored_paths_pointing_elsewhere is informational (last-saved paths)."};
+    ok=verified,references_saved_first=autoSaved.ToArray(),isolated_open_verified=false,note="ok = every document copied and every referenced file present (non-empty) in the package. An isolated open was NOT performed: close documents with the same names and open the packed main file to confirm. stored_paths_pointing_elsewhere is informational (last-saved paths)."};
    return true;
   }
   return false;

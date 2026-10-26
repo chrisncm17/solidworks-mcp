@@ -3,7 +3,8 @@
 ```
 server/
   server.mjs            MCP server (stdio): tool list, argument validation, dispatch, MCP resources (recipes)
-  tools.mjs             the 106 tool schemas (Ajv, strict) + cross-argument checks (argumentError)
+  tools.mjs             the 112 tool schemas (Ajv, strict) + cross-argument checks (argumentError)
+  session_recorder.mjs   v3.11 records changing calls; sw_session_recipe exports them as a recipe
   worker-client.mjs     starts Worker-equations.exe, one JSON line per call, serial queue, timeouts = unknown outcome
   part_ir.mjs           part-ir/1 compiler: recipe -> sketches/features -> verified part (sw_part_build)
   assembly_build.mjs    assembly-ir/1: parts, intents, fasteners, kits, patterns, origins, verification (sw_assembly_build)

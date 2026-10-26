@@ -103,6 +103,12 @@ partial class Worker {
    // only "it is now suppressed / gone" about the items the call itself named (or reported as intentionally suppressed); anything that BROKE is still a regression
    // v3.9 sheet metal: folding/unfolding IS suppressing the Flat-Pattern (and its bounding box and sub-features)
    if(op=="sheet_metal")try{foreach(var f in AllFeatures(cur)){string tn=f.GetTypeName2();if(tn=="FlatPattern"||tn.IndexOf("BoundingBox",StringComparison.OrdinalIgnoreCase)>=0||tn=="SMBoundingBox"){named.Add(f.Name);for(var sf=f.GetFirstSubFeature() as IFeature;sf!=null;sf=sf.GetNextSubFeature() as IFeature)named.Add(sf.Name);}}}catch{}
+   // v3.11 replace_component: the replaced instance (and everything inside it) disappearing IS the intended effect
+   if(op=="replace_component"&&res!=null)try{var rp=res.GetType().GetProperty("replaced");var gone=rp==null?new string[0]:Items(rp.GetValue(res,null)).Select(Convert.ToString).ToArray();
+    broke=broke.Where(x=>!(x.IndexOf("desapareci",StringComparison.OrdinalIgnoreCase)>=0&&gone.Any(g=>x.EndsWith(" "+g,StringComparison.Ordinal)||x.IndexOf(" "+g+"/",StringComparison.Ordinal)>=0))).ToList();
+    // a broken mate re-created on the new part (remated ok) disappears under its old name: also intended
+    var rm=res.GetType().GetProperty("remated");if(rm!=null)foreach(var x in Items(rm.GetValue(res,null))){var ok=x.GetType().GetProperty("ok");var mn=x.GetType().GetProperty("mate");
+     if(ok!=null&&(bool)ok.GetValue(x,null)){string m=Convert.ToString(mn.GetValue(x,null));broke=broke.Where(y=>!(y.EndsWith(" "+m,StringComparison.Ordinal)&&(y.IndexOf("desapareci",StringComparison.OrdinalIgnoreCase)>=0||y.IndexOf("rompi",StringComparison.OrdinalIgnoreCase)>=0)||y.StartsWith("Error nuevo en "+m+":",StringComparison.Ordinal))).ToList();}}}catch{}
    if(named.Count>0&&(op=="suppress_feature"||op=="delete_feature"||op=="mates"||op=="delete_mate"||op=="assembly_repair"||op=="sheet_metal"))broke=broke.Where(x=>!named.Any(n=>x.EndsWith(" "+n,StringComparison.Ordinal)&&(x.IndexOf("suprimid",StringComparison.OrdinalIgnoreCase)>=0||x.IndexOf("desapareci",StringComparison.OrdinalIgnoreCase)>=0))).ToList();
    var refsNow=DirtyReferences(cur);bool touchedRefs=refsNow.Any(m=>!refsDirtyBefore.Contains(m));
    if(broke.Count==0){if(point!=null)try{File.Delete(point);}catch{}lastGuard=new{mode=mode,checked_health=true,regressions=new string[0],note=touchedRefs?"The operation also changed referenced documents; save them with include_references.":null};return res;}

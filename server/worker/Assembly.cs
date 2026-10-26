@@ -102,6 +102,14 @@ partial class Worker {
   if(box==null||box.Length<6)return new{components=names,volume_mm3=v,kind=fastener?"fastener":"unknown",fragile=v<1};
   var dims=new[]{(box[3]-box[0])*1000,(box[4]-box[1])*1000,(box[5]-box[2])*1000};var s=dims.OrderBy(x=>x).ToArray();
   double fill=s[0]*s[1]*s[2]>0?v/(s[0]*s[1]*s[2]):0;bool thin=s[0]<0.1,fragile=thin||v<1;
+  // v3.11 thread engagement: IsFastener is only set for Toolbox parts; the MCP's own generated bolts (ISO4017_M5x16...) inside a
+  // tap-drill hole gave a ring-shaped "overlap" (jet engine: 8 x 69.4 mm3). A fastener by name whose interference is a thin ring
+  // around its axis (two equal small sides, ring fill) is the thread, not a clash.
+  if(!fastener&&names.Any(n=>System.Text.RegularExpressions.Regex.IsMatch(n,@"(?i)\b(ISO_?\s?(4017|4014|4762|10642|7380|4026|4027|4028|4029)|DIN_?\s?(933|931|912|7991)|bolt|screw|tornillo|perno|esparrago|stud)"))){
+   for(int ax=0;ax<3&&!fastener;ax++){var o=dims.Where((x,i)=>i!=ax).ToArray();if(o[0]>0&&Math.Abs(o[0]-o[1])<=0.02*Math.Max(o[0],o[1])+0.01&&o[0]<=36){double rOut=o[0]/2,len=dims[ax];double ring=v/(len*Math.PI);double rIn2=rOut*rOut-ring;
+    if(rIn2>0&&Math.Sqrt(rIn2)>0.6*rOut)fastener=true;}}
+   if(fastener)return new{components=names,volume_mm3=v,kind="thread_engagement",fragile=false,expected=true,thickness_mm=s[0],box_mm=dims,fill=fill,center_mm=new[]{(box[0]+box[3])*500,(box[1]+box[4])*500,(box[2]+box[5])*500},why="generated bolt without thread inside a tapped (tap-drill) hole: the ring between nominal and drill diameter is the thread engagement, not a clash"};
+  }
   string kind=fastener?"fastener":thin?"sliver":v<1?"tiny":"overlap";
   string why=fastener?"bolt or thread at nominal size inside its hole; usually expected":
    thin?"faces almost touching (zero clearance or a part shifted a few hundredths of mm); value changes with tiny placement differences":

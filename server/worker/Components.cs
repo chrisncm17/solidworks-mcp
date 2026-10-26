@@ -44,6 +44,14 @@ partial class Worker {
    var pathsBefore=CompPaths(asm);string oldFull=Path.GetFullPath(oldFile),newFull=Path.GetFullPath(file);
    var wanted=all?pathsBefore.Where(kv=>string.Equals(kv.Value,oldFull,StringComparison.OrdinalIgnoreCase)).Select(kv=>kv.Key).ToList():new List<string>{c.Name2};
    var alreadyNew=new HashSet<string>(pathsBefore.Where(kv=>string.Equals(kv.Value,newFull,StringComparison.OrdinalIgnoreCase)).Select(kv=>kv.Key));
+   // v3.11 re-mate: a DIFFERENT part (not a revision of the same file) has new face ids, so SolidWorks breaks every mate on
+   // it (tested: a distance mate on the bottom face). Record those mates as {component, local_point_mm} first; after the
+   // replace each broken one is deleted and added again on the face of the new part at the same local point.
+   var mateDefs=new Dictionary<string,Dictionary<string,object>>();string oldName=c.Name2; // c.Name2 already answers the NEW name after the replace (tested)
+   if(!Flag(a,"no_remate")){var ids=new HashSet<string>(((object[])asm.GetComponents(true)??new object[0]).Cast<IComponent2>().Select(x=>x.Name2));var wv=new List<string>();
+    // round-trip through JSON: the definition then has exactly the shape add_mate receives from a request
+    foreach(var mf in Mates(d))try{var def=Json.Deserialize<Dictionary<string,object>>(Json.Serialize(AssemblyIrMate(mf,d,ids,wv)));
+     if(Items(def["entities"]).Any(en=>{var ed=en as Dictionary<string,object>;return ed!=null&&ed.ContainsKey("component")&&Convert.ToString(ed["component"])==c.Name2;}))mateDefs[mf.Name]=def;}catch{}}
    d.ClearSelection2(true);if(!c.Select4(false,null,false))throw new Exception("Cannot select "+c.Name2);
    int choice=cfg==""?(int)swReplaceComponentsConfiguration_e.swReplaceComponentsConfiguration_MatchName:(int)swReplaceComponentsConfiguration_e.swReplaceComponentsConfiguration_ManuallySelect;
    bool ok=false;string apiError=null;try{ok=asm.ReplaceComponents2(file,cfg,all,choice,true);}catch(Exception ex){apiError=ex.Message;}
@@ -57,7 +65,21 @@ partial class Worker {
     if(!untouched)recoveryPending.Add(d.GetPathName());
     throw new Exception("Replace did not complete as requested"+(apiError!=null?" ("+apiError+")":"")+": replaced "+nowNew.Length+" of "+wanted.Count+(othersChanged.Length>0?", also changed "+string.Join(",",othersChanged):"")+(untouched?"; nothing changed":"; the assembly is PARTIALLY changed, saving is blocked — close without saving"));}
    var newBroken=BrokenMates(d).Where(n=>!brokenBefore.Contains(n)).ToArray();
-   result=new{replaced=wanted.ToArray(),now_using_new_file=nowNew,old_file=oldFile,new_file=file,mates_with_new_errors=newBroken,
+   var remated=new List<object>();
+   if(newBroken.Length>0&&mateDefs.Count>0&&nowNew.Length==1){
+    foreach(var mn in newBroken.Where(mateDefs.ContainsKey).ToList()){var def=mateDefs[mn];
+     var mf=Mates(d).FirstOrDefault(x=>x.Name==mn);if(mf==null)continue;
+     var args=def.Where(kv=>kv.Key!="name"&&kv.Key!="suppressed").ToDictionary(kv=>kv.Key,kv=>kv.Value);
+     foreach(var en in Items(args["entities"])){var ed=en as Dictionary<string,object>;if(ed!=null&&ed.ContainsKey("component")&&Convert.ToString(ed["component"])==oldName)ed["component"]=nowNew[0];}
+     if(Convert.ToString(args["type"])=="unsupported"){remated.Add(new{mate=mn,ok=false,error="mate type not re-creatable"});continue;}
+     // the new mate first: the broken one is deleted only once its replacement exists
+     object nm;try{object r;TryAssembly2("add_mate",args,d,out r);var p=r.GetType().GetProperty("mate");nm=p==null?null:p.GetValue(r,null);}
+     catch(Exception ex){remated.Add(new{mate=mn,ok=false,error=ex.Message});continue;}
+     d.ClearSelection2(true);bool del=mf.Select2(false,0)&&d.Extension.DeleteSelection2(0);d.ClearSelection2(true);
+     remated.Add(new{mate=mn,ok=del,new_mate=nm,error=del?null:"re-created as "+nm+" but the broken "+mn+" could not be deleted"});}
+    try{d.ForceRebuild3(false);}catch{}
+    newBroken=BrokenMates(d).Where(n=>!brokenBefore.Contains(n)).ToArray();}
+   result=new{replaced=wanted.ToArray(),now_using_new_file=nowNew,old_file=oldFile,new_file=file,mates_with_new_errors=newBroken,remated=remated,
     note=(newBroken.Length>0?"Some mates could not re-attach: fix them (sw_edit_mate / sw_delete_mate + sw_add_mate) before saving. ":"")+"Unsaved until sw_save.",inspection=Inspect(d)};
    return true;
   }

@@ -106,6 +106,23 @@ partial class Worker {
  [DllImport("user32.dll")]static extern bool IsWindowVisible(IntPtr h);
  [DllImport("user32.dll")]static extern bool IsWindow(IntPtr h);
  [DllImport("user32.dll")]static extern bool PostMessage(IntPtr h,uint m,IntPtr w,IntPtr l);
+ [DllImport("user32.dll")]static extern bool ShowWindow(IntPtr h,int cmd);
+ [DllImport("user32.dll")]static extern bool SetForegroundWindow(IntPtr h);
+ [DllImport("user32.dll")]static extern bool BringWindowToTop(IntPtr h);
+ [DllImport("user32.dll")]static extern IntPtr GetForegroundWindow();
+ [DllImport("user32.dll")]static extern bool AttachThreadInput(uint a,uint b,bool attach);
+ [DllImport("kernel32.dll")]static extern uint GetCurrentThreadId();
+ // Windows refuses SetForegroundWindow from a background process (tested: false right after start); sharing the input
+ // queue of the current foreground window for the call is the documented way around it
+ static bool ForceForeground(IntPtr h){if(SetForegroundWindow(h))return true;uint pid;
+  uint fg=GetWindowThreadProcessId(GetForegroundWindow(),out pid),me=GetCurrentThreadId();bool att=fg!=0&&fg!=me&&AttachThreadInput(me,fg,true);
+  try{BringWindowToTop(h);ShowWindow(h,3);return SetForegroundWindow(h)||GetForegroundWindow()==h;}finally{if(att)AttachThreadInput(me,fg,false);}}
+ // the SolidWorks frame of that process: Process.MainWindowHandle is zero while it was started minimized/hidden (tested)
+ static IntPtr SwMainWindow(int pid){IntPtr best=IntPtr.Zero;
+  EnumWindows((h,l)=>{uint p;GetWindowThreadProcessId(h,out p);if(p!=(uint)pid)return true;var t=new System.Text.StringBuilder(512);GetWindowText(h,t,512);
+   if(t.ToString().StartsWith("SOLIDWORKS",StringComparison.OrdinalIgnoreCase)){best=h;return false;}return true;},IntPtr.Zero);
+  if(best==IntPtr.Zero)try{best=Process.GetProcessById(pid).MainWindowHandle;}catch{}
+  return best;}
  static readonly string[] RecoveryNotice={"No se puede crear un archivo histórico","Unable to create history file"};
  static int AckRecoveryNotice(int pid){
   var hits=new List<IntPtr>();
@@ -198,7 +215,11 @@ partial class Worker {
   if(action=="cleanup_orphans"){result=CleanupOrphans(a.ContainsKey("include_unrecorded")&&Convert.ToBoolean(a["include_unrecorded"]));return true;}
   if(action=="show"||action=="minimize"){
    if(Convert.ToString(st["mode"])!="dedicated")throw new Exception("No dedicated instance in use");var s=ConnectSw();
-   s.FrameState=(int)(action=="show"?swWindowState_e.swWindowMaximized:swWindowState_e.swWindowMinimized);result=InstanceInfo();return true;
+   s.FrameState=(int)(action=="show"?swWindowState_e.swWindowMaximized:swWindowState_e.swWindowMinimized);
+   // v3.11: FrameState alone left the minimized window hidden (tested); restore/minimize the real top window too and bring it forward
+   bool front=false;IntPtr h=IntPtr.Zero;try{if(action=="show")s.Visible=true;h=SwMainWindow(Convert.ToInt32(st["pid"]));
+    if(h!=IntPtr.Zero){if(action=="show"){ShowWindow(h,6);ShowWindow(h,3);front=ForceForeground(h);}else ShowWindow(h,6);}}catch{}
+   result=new{info=InstanceInfo(),window_found=h!=IntPtr.Zero,foreground=front};return true;
   }
   if(action=="stop"){
    if(Convert.ToString(st["mode"])!="dedicated")throw new Exception("No dedicated instance in use");

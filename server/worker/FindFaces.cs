@@ -19,12 +19,23 @@ partial class Worker {
   // v3.7 review: the part document's bodies are those of ITS active configuration; refuse instead of reading another one
   string act=null;try{act=((IConfiguration)part.ConfigurationManager.ActiveConfiguration).Name;}catch{}
   if(!string.IsNullOrEmpty(c.ReferencedConfiguration)&&act!=null&&act!=c.ReferencedConfiguration)throw new Exception(c.Name2+": uses configuration "+c.ReferencedConfiguration+" but the part is open in "+act+"; find would read the wrong geometry");
+  // v3.11 descriptions (idea from HarrierPigeon): extreme "+z" = the outermost plane facing +Z ("the top face"); inclined = not
+  // aligned with a part axis; feature = only faces made by that feature; pick largest|smallest|outermost resolves several.
+  if(f.ContainsKey("extreme")){string ex=Str(f,"extreme").ToLowerInvariant();int k="xyz".IndexOf(ex.Length==2?ex[1]:'?');if(k<0||(ex[0]!='+'&&ex[0]!='-'))throw new Exception("find.extreme must be +x, -x, +y, -y, +z or -z");
+   var nrm=new double[3];nrm[k]=ex[0]=='+'?1:-1;f=new Dictionary<string,object>(f);f["kind"]="plane";f["normal"]=nrm.Cast<object>().ToList();if(!f.ContainsKey("pick"))f["pick"]="outermost";}
   string kind=f.ContainsKey("kind")?Str(f,"kind"):(f.ContainsKey("diameter_mm")?"cylinder":"plane");
   if(kind!="cylinder"&&kind!="plane")throw new Exception("find.kind must be cylinder or plane");
   double tol=f.ContainsKey("tol_mm")?Num(f,"tol_mm"):0.02;
+  bool inclined=f.ContainsKey("inclined")&&Convert.ToBoolean(f["inclined"]);
+  Func<double[],bool> principal=v=>v!=null&&v.Any(x=>Math.Abs(Math.Abs(x)-1)<1e-6);
+  List<double[]> featFaces=null;
+  if(f.ContainsKey("feature")){var feat=((IPartDoc)part).FeatureByName(Str(f,"feature")) as IFeature;if(feat==null)throw new Exception("find.feature: no feature "+Str(f,"feature")+" in "+System.IO.Path.GetFileName(part.GetPathName()));
+   featFaces=((object[])feat.GetFaces()??new object[0]).Cast<IFace2>().Select(x=>{var b=(double[])x.GetBox();return new[]{x.GetArea(),b[0],b[1],b[2],b[3],b[4],b[5]};}).ToList();}
   var outl=new List<FaceCand>();
   foreach(var r in PartFaces(part,act)){
    if(r.kind!=kind)continue;
+   if(inclined&&principal(kind=="plane"?r.n:r.ax))continue;
+   if(featFaces!=null){var b=(double[])r.face.GetBox();double ar=r.face.GetArea();if(!featFaces.Any(q=>Math.Abs(q[0]-ar)<=1e-9+1e-6*ar&&Enumerable.Range(0,6).All(i=>Math.Abs(q[i+1]-b[i])<1e-8)))continue;}
    var cand=new FaceCand{kind=kind};
    if(kind=="cylinder"){
     if(f.ContainsKey("diameter_mm")&&Math.Abs(r.dia-Num(f,"diameter_mm"))>tol)continue;
@@ -44,6 +55,11 @@ partial class Worker {
      cand.score=cp==null?double.MaxValue:Math.Sqrt(Math.Pow(q[0]-cp[0]*1000,2)+Math.Pow(q[1]-cp[1]*1000,2)+Math.Pow(q[2]-cp[2]*1000,2));}}
    cand.area_mm2=r.Area();cand.rec=r;outl.Add(cand);
   }
+  if(f.ContainsKey("pick")){string pk=Str(f,"pick");
+   if(pk=="largest")return outl.OrderByDescending(x=>x.area_mm2).ToList();
+   if(pk=="smallest")return outl.OrderBy(x=>x.area_mm2).ToList();
+   if(pk=="outermost")return outl.OrderByDescending(x=>kind=="cylinder"?x.diameter_mm??0:x.offset_mm??0).ThenByDescending(x=>x.area_mm2).ToList();
+   throw new Exception("find.pick must be largest, smallest or outermost");}
   return outl.OrderBy(x=>x.score).ThenByDescending(x=>x.area_mm2).ToList();
  }
  // v3.8 face cache: every cylinder/plane face of a part file is read ONCE (geometry, area, interior point) and reused by every
@@ -98,6 +114,7 @@ partial class Worker {
   if(cands.Count==0)throw new Exception("find: no "+(f.ContainsKey("kind")?Str(f,"kind"):"face")+" of "+comp.Name2+" matches "+Json.Serialize(f));
   FaceCand pick;
   if(f.ContainsKey("index")){int i=Convert.ToInt32(f["index"]);if(i<0||i>=cands.Count)throw new Exception("find.index out of range (0.."+(cands.Count-1)+")");pick=cands[i];}
+  else if(f.ContainsKey("pick")||f.ContainsKey("extreme"))pick=cands[0];
   else if(cands.Count==1||(f.ContainsKey("near_mm")&&(cands.Count<2||cands[1].score-cands[0].score>0.5)))pick=cands[0];
   else throw new Exception("find: "+cands.Count+" faces of "+comp.Name2+" match "+Json.Serialize(f)+"; add near_mm or index. Candidates: "+Json.Serialize(cands.Take(8).Select((c,i)=>new{index=i,c.diameter_mm,c.axis,c.axis_point_mm,c.normal,c.offset_mm,c.area_mm2,local_point_mm=c.Point()}).ToArray()));
   if(pick.Point()==null)throw new Exception("find: the matching face of "+comp.Name2+" has no point that selects only that face (area "+pick.area_mm2+" mm2); use another face or a plane");

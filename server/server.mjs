@@ -17,6 +17,7 @@ import { examReady, MCP_VERSION } from './exam_ready.mjs';
 import { answerSheet } from './answers.mjs';
 import { recordStep, summarize } from './exam_state.mjs';
 import { assemblyDrawing } from './assembly_drawing.mjs';
+import { recordCall, sessionRecipe } from './session_recorder.mjs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 const GENERATED = join(dirname(fileURLToPath(import.meta.url)), 'generated');
@@ -31,7 +32,20 @@ const server = new Server({ name: 'solidworks-local', version: MCP_VERSION }, {
 server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: tools.map(({ operation, validationSchema, ...definition }) => definition) }));
 server.setRequestHandler(ListResourcesRequestSchema, async () => ({ resources: resourceList() }));
 server.setRequestHandler(ReadResourceRequestSchema, async request => readRecipe(request.params.uri));
+// v3.11 late_results: what finished after its own call was cancelled or timed out is attached to the next response
 server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
+  const t0 = performance.now();
+  const out = await handleCall(request, extra);
+  // v3.11 session recording (sw_session_recipe): every call is noted while a recording is active
+  try { const tool = tools.find(t => t.name === request.params.name); if (tool) { let parsed = null; try { parsed = JSON.parse(out.content?.[0]?.text ?? 'null'); } catch { parsed = { ok: !out.isError, error: out.content?.[0]?.text }; } if (out.isError && parsed && typeof parsed === 'object') parsed.ok = false; recordCall(GENERATED, tool.operation, request.params.arguments ?? {}, parsed, performance.now() - t0); } } catch { }
+  const late = worker.takeLate();
+  if (late.length) {
+    const { compactWorkerResponse } = await import('./compact.mjs');
+    out.content = [...(out.content ?? []), { type: 'text', text: JSON.stringify({ late_results: late.map(l => ({ ...l, response: l.response && compactWorkerResponse(l.response, GENERATED, l.operation) })) }) }];
+  }
+  return out;
+});
+async function handleCall(request, extra) {
   const tool = tools.find(t => t.name === request.params.name);
   const args = request.params.arguments ?? {};
   const validator = validators.get(request.params.name);
@@ -50,6 +64,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
       const content = [{ type: 'text', text: JSON.stringify({ ok: true, result }) }];
       if (args.action === 'render') content.push({ type: 'image', mimeType: 'image/png', data: (await readFile(result.path)).toString('base64') });
       return { content };
+    }
+    if (tool.operation === 'session_recipe') {
+      try { return { content: [{ type: 'text', text: JSON.stringify({ ok: true, result: sessionRecipe(args, { root: GENERATED }) }) }] }; }
+      catch (e) { return { isError: true, content: [{ type: 'text', text: JSON.stringify({ ok: false, error: e.message }) }] }; }
     }
     if (tool.operation === 'assembly_draft') {
       try { const result = await assemblyDraft(args); return { content: [{ type: 'text', text: JSON.stringify({ ok: true, result }) }] }; }
@@ -71,8 +89,18 @@ server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
       catch (e) { return { isError: true, content: [{ type: 'text', text: JSON.stringify({ ok: false, error: e.message }) }] }; }
     }
     if (tool.operation === 'part_build' || tool.operation === 'assembly_build') {
-      try { const result = await (tool.operation === 'assembly_build' ? assemblyBuild : partBuild)(args, { worker, signal: extra.signal, root: GENERATED }); if (args.action === 'build') try { recordStep(GENERATED, summarize(tool.operation, args, result)); } catch { } const { compactBuildResult } = await import('./compact.mjs'); return { isError: result.ok === false, content: [{ type: 'text', text: JSON.stringify({ ok: result.ok !== false, result: compactBuildResult(result, GENERATED, tool.operation) }) }] }; }
-      catch (e) { return { isError: true, content: [{ type: 'text', text: e.message }] }; }
+      // v3.11: a build is not stopped by a client timeout/cancel (it used to stop half way, between two worker calls). It runs as
+      // a tracked job (other calls wait for it) and, when the client already gave up, its result arrives as late_results.
+      const { trackJob } = await import('./assembly_build.mjs'); const { compactBuildResult } = await import('./compact.mjs');
+      const run = (tool.operation === 'assembly_build' ? assemblyBuild : partBuild)(args, { worker, root: GENERATED });
+      trackJob(`${tool.operation}:${args.plan?.name ?? args.ir?.part ?? Date.now()}`, run);
+      try {
+        const result = await run; if (args.action === 'build') try { recordStep(GENERATED, summarize(tool.operation, args, result)); } catch { }
+        const compact = compactBuildResult(result, GENERATED, tool.operation);
+        if (extra.signal?.aborted) worker.late.push({ operation: tool.operation, reason: 'client timeout/cancel', response: { ok: result.ok !== false, result: compact } });
+        return { isError: result.ok === false, content: [{ type: 'text', text: JSON.stringify({ ok: result.ok !== false, result: compact }) }] };
+      }
+      catch (e) { if (extra.signal?.aborted) worker.late.push({ operation: tool.operation, reason: 'client timeout/cancel', error: e.message }); return { isError: true, content: [{ type: 'text', text: e.message }] }; }
     }
     if (tool.operation === 'measure_sheet') {
       const readText = (path, page) => drawingRead({ path, page, action: 'text' }, { signal: extra.signal });
@@ -87,13 +115,15 @@ server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
       try { return { content: [{ type: 'text', text: JSON.stringify({ ok: true, result: await assemblyDiff(worker, args, { signal: extra.signal }) }) }] }; }
       catch (e) { return { isError: true, content: [{ type: 'text', text: e.message }] }; }
     }
-    const response = await worker.call(tool.operation, args, { signal: extra.signal });
+    const raw = await worker.call(tool.operation, args, { signal: extra.signal });
+    const { compactWorkerResponse } = await import('./compact.mjs');
+    const response = compactWorkerResponse(raw, GENERATED, tool.operation);
     const content = [{ type: 'text', text: JSON.stringify(response) }];
-    if (response.ok && tool.operation === 'preview') content.push({ type: 'image', mimeType: 'image/png', data: (await readFile(response.result.path)).toString('base64') });
+    if (response.ok && tool.operation === 'preview') for (const p of response.result.paths ?? [response.result.path]) content.push({ type: 'image', mimeType: 'image/png', data: (await readFile(p)).toString('base64') });
     // A Pack and Go whose verification failed is an error even though the worker call itself succeeded.
     return { isError: isToolError(tool.operation, response), content };
   } catch (e) { return { isError: true, content: [{ type: 'text', text: e.message }] }; }
-});
+}
 server.onclose = () => worker.close();
 for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => { worker.close(); process.exit(0); });
 process.stdin.on('end', () => { worker.close(); setTimeout(() => process.exit(0), 50).unref(); });

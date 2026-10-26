@@ -2,7 +2,7 @@
 
 ![SolidWorks MCP: AI agents model, assemble, verify and draw in SOLIDWORKS](docs/images/social_preview.png)
 
-**Let an AI agent model, assemble, verify and draw in SolidWorks.** A [Model Context Protocol](https://modelcontextprotocol.io) server for SolidWorks on Windows with 106 tools: parts from a short recipe, whole assemblies in one call, exact mass and center of mass, drawings with BOM, balloons and section views, and reading of PDF/DXF drawings - all with backups and verified rollback so your own files are never broken.
+**Let an AI agent model, assemble, verify and draw in SolidWorks.** A [Model Context Protocol](https://modelcontextprotocol.io) server for SolidWorks on Windows with 112 tools: parts from a short recipe, whole assemblies in one call, exact mass and center of mass, drawings with BOM, balloons and section views, and reading of PDF/DXF drawings - all with backups and verified rollback so your own files are never broken.
 
 Works with **Claude Desktop, Claude Code, OpenAI Codex (CLI / IDE)** and any MCP client that can launch a local (stdio) server.
 
@@ -44,7 +44,13 @@ git clone https://github.com/chrisncm17/solidworks-mcp.git
 cd solidworks-mcp
 npm install
 npm run build        # compiles the C# worker against your SolidWorks API
-npm test             # 112 offline tests, no SolidWorks needed
+npm test             # 122 offline tests (4 skipped without SolidWorks)
+```
+
+Or in one line - checks, build, tests and registration in Claude Desktop, Claude Code and Codex (config backed up first; `-WhatIf` shows what it would do):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File install.ps1
 ```
 
 Then register the server in your client - full details in [docs/INSTALL.md](docs/INSTALL.md):
@@ -58,7 +64,7 @@ Ask your agent: *"Start SolidWorks with sw_exam_ready, then build a 100 x 60 x 1
 ## All tools
 
 <!-- tools:start -->
-**106 tools.** Every option of every tool: [docs/TOOLS.md](docs/TOOLS.md).
+**112 tools.** Every option of every tool: [docs/TOOLS.md](docs/TOOLS.md).
 
 <details><summary><b>Session and documents</b> (20)</summary>
 
@@ -133,7 +139,7 @@ Ask your agent: *"Start SolidWorks with sw_exam_ready, then build a 100 x 60 x 1
 
 </details>
 
-<details><summary><b>Assemblies</b> (25)</summary>
+<details><summary><b>Assemblies</b> (26)</summary>
 
 | Tool | What it does |
 |---|---|
@@ -157,6 +163,7 @@ Ask your agent: *"Start SolidWorks with sw_exam_ready, then build a 100 x 60 x 1
 | `sw_find_faces` | Read-only: faces of an assembly component described like the drawing says, instead of a point: kind cylinder (diameter_mm, axis) or plane (normal outward, offset_mm), nea… |
 | `sw_find_origin` | The drawing gives a center of mass but not where its origin is nor how its axes point: tries every component origin and every hole/shaft axis point with the 24 axis-align… |
 | `sw_insert_component` | Insert a part or subassembly (absolute path) into an assembly with its ORIGIN at position_mm (default 0,0,0, no rotation; |
+| `sw_insert_components` | several components in ONE call (no full tree per insert): items [{path, position_mm \| transform \| fit_box, fixed, configuration}]. |
 | `sw_interference` | Detect interferences in a managed ASSEMBLY: count, total volume mm^3 and component pairs. |
 | `sw_mass_override` | Override the mass (and optionally the center of mass, in mm in this document coordinates) of a part or assembly, ONLY when the drawing specifies it (e.g. |
 | `sw_mates` | Managed ASSEMBLY mates. |
@@ -165,7 +172,7 @@ Ask your agent: *"Start SolidWorks with sw_exam_ready, then build a 100 x 60 x 1
 
 </details>
 
-<details><summary><b>Drawings and reading drawings</b> (11)</summary>
+<details><summary><b>Drawings and reading drawings</b> (12)</summary>
 
 | Tool | What it does |
 |---|---|
@@ -174,6 +181,7 @@ Ask your agent: *"Start SolidWorks with sw_exam_ready, then build a 100 x 60 x 1
 | `sw_bom` | Bill of materials (lista de materiales / BOM) on a managed DRAWING. |
 | `sw_create_drawing` | Create a native drawing with three standard orthographic views of a SAVED managed part/assembly using a DRWDOT template. |
 | `sw_drawing_annotate` | Add the MODEL dimensions to drawing views (Insert Model Items: dimensions marked for drawing; |
+| `sw_drawing_dimension` | Manual dimensions on a managed DRAWING view (Cota inteligente). |
 | `sw_drawing_new` | Low-level, used by sw_assembly_drawing: empty drawing from a DRWDOT template with a width_mm x height_mm sheet, saved at an absolute path inside generated/drawings (never… |
 | `sw_drawing_note` | Text notes on the active (or named) sheet of a managed drawing, not attached to a view: one note per line in lines, top-left at position_mm [x,y] from the sheet bottom-le… |
 | `sw_drawing_read` | action dimensions (PDF exported by SolidWorks, one page): for every linear dimension its direction (horizontal, vertical), its view (found from the geometry, no labels ne… |
@@ -183,10 +191,12 @@ Ask your agent: *"Start SolidWorks with sw_exam_ready, then build a 100 x 60 x 1
 
 </details>
 
-<details><summary><b>Verification, export and delivery</b> (11)</summary>
+<details><summary><b>Verification, export and delivery</b> (15)</summary>
 
 | Tool | What it does |
 |---|---|
+| `sw_boundary` | Recubrir por limite (Boundary boss/cut): like sw_loft but each profile influences the whole shape, giving smoother transitions; |
+| `sw_combine` | Combinar bodies of a multibody managed part (Insertar > Operaciones > Combinar). |
 | `sw_compare_volume` | Compare measured solid volume against a positive target in mm^3 with an explicitly supplied tolerance percent. |
 | `sw_export` | Export complete managed part/assembly to NEW STEP, STL, Parasolid or IGES, or drawing to PDF, DXF or DWG, in generated (sheet metal flat patterns: sw_sheet_metal export_f… |
 | `sw_export_batch` | Export several documents to several formats in ONE call: every document_id in document_ids to every format in formats (parts/assemblies: step, stl, x_t, igs; |
@@ -196,8 +206,10 @@ Ask your agent: *"Start SolidWorks with sw_exam_ready, then build a 100 x 60 x 1
 | `sw_mass_check` | READ-ONLY mass and center-of-mass verification of a part or assembly (exam check: masa y centro de masa X,Y,Z). |
 | `sw_pack_and_go` | Pack and Go a SAVED managed assembly or drawing into generated/packs/<folder_name> (flattened, includes referenced parts), then verify that every referenced file exists i… |
 | `sw_part_diff` | Read-only comparison of a managed PART against an original .SLDPRT (absolute path, opened read-only through a temporary copy): volume, mass, material, solid body count, s… |
-| `sw_preview` | Create an isometric PNG preview of a managed part/assembly or fit the current drawing sheet. |
+| `sw_preview` | PNG preview(s) returned as images: a managed part/assembly in one or more standard views (views, default [iso]) or the whole current drawing sheet. |
+| `sw_session_recipe` | Record what this session does and turn it into a recipe the next chat can follow (MCP resource solidworks://recipe/<id>). |
 | `sw_topology` | Inspect faces and unique edges with short-lived selection references. |
+| `sw_wrap` | Envolver: wrap a closed sketch onto a face of the part. |
 
 </details>
 
@@ -208,7 +220,7 @@ Ask your agent: *"Start SolidWorks with sw_exam_ready, then build a 100 x 60 x 1
 ```
 MCP client (Claude / Codex / ...)
    │  stdio, JSON-RPC
-server/server.mjs ── tools.mjs (106 JSON schemas + cross-checks), recipes (MCP resources)
+server/server.mjs ── tools.mjs (108 JSON schemas + cross-checks), recipes (MCP resources)
    │  high-level tools in JS: part_ir, assembly_build, assembly_drawing, drawing_read (+ Python PDF/DXF helpers)
    │  one JSON line per call
 server/Worker-equations.exe  (C#, STA, SolidWorks COM API) ── safe-edit guard: health check, rollback, backups

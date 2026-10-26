@@ -204,12 +204,15 @@ export function checkAssemblyPlan(plan) {
     if (!text(c.id) || ids.has(c.id)) errors.push(`${w}.id: ausente o repetido`);
     ids.add(c.id);
     if (c.unsupported) errors.push(`${w}: unsupported: ${c.unsupported}`);
-    else if (!simpleFile(c.file) || !/\.sld(prt|asm)$/i.test(c.file)) errors.push(`${w}.file: nombre de archivo SLDPRT/SLDASM sin ruta (o make para tornilleria)`);
+    // subcarpetas de parts_dir permitidas (p. ej. assemblies/Sub.SLDASM); la contención se verifica al construir
+    else if (!text(c.file) || !c.file.split(/[\\/]/).every(s => simpleFile(s) && s !== '..') || !/\.sld(prt|asm)$/i.test(c.file)) errors.push(`${w}.file: nombre de archivo SLDPRT/SLDASM relativo a parts_dir (o make para tornilleria)`);
     if (c.fixed !== undefined && typeof c.fixed !== 'boolean') errors.push(`${w}.fixed: boolean requerido`);
     if (c.position_mm !== undefined && !vector(c.position_mm)) errors.push(`${w}.position_mm: vector de 3 números finitos`);
     if (c.transform !== undefined && !validAssemblyTransform(c.transform)) errors.push(`${w}.transform: rotación rígida ArrayData 16 (SI) requerida`);
     if (c.transform && vector(c.position_mm) && c.position_mm.some((v, k) => Math.abs(v - c.transform[9 + k] * 1000) > 1e-6)) errors.push(`${w}: position_mm contradice transform`);
     if (c.configuration !== undefined && !text(c.configuration)) errors.push(`${w}.configuration: nombre requerido`);
+    // v3.11 fit_box: {axis, from_mm, to_mm} places the component by its box along that axis
+    if (c.fit_box !== undefined && (!object(c.fit_box) || !['x', 'y', 'z'].includes(c.fit_box.axis) || !finite(c.fit_box.from_mm) || !finite(c.fit_box.to_mm) || c.fit_box.to_mm <= c.fit_box.from_mm)) errors.push(`${w}.fit_box: {axis:x|y|z, from_mm < to_mm}`);
   });
   mates.forEach((m, i) => {
     const w = `mates[${i}] ${m?.name ?? ''}`;
@@ -222,6 +225,8 @@ export function checkAssemblyPlan(plan) {
     if (m.align === undefined || m.align === 'closest') { if (!(m._intent && m.type === 'concentric')) warnings.push(`${w}: usar align explícito aligned/anti_aligned; closest depende de la posición inicial`); }
     else if (!['aligned', 'anti_aligned'].includes(m.align)) errors.push(`${w}.align: aligned|anti_aligned|closest`);
     for (const flag of ['flip', 'suppressed', 'lock_rotation']) if (m[flag] !== undefined && typeof m[flag] !== 'boolean') errors.push(`${w}.${flag}: boolean requerido`);
+    // v3.11 expect: origin the moved component must reach (the mate is retried flipped once, else it fails)
+    if (m.expect !== undefined && (!object(m.expect) || !ids.has(m.expect.component) || !vector(m.expect.origin_mm) || (m.expect.tolerance_mm !== undefined && !(finite(m.expect.tolerance_mm) && m.expect.tolerance_mm > 0)))) errors.push(`${w}.expect: {component (id del plan), origin_mm [x,y,z], tolerance_mm?}`);
     for (const [type, field, max] of [['distance', 'distance_mm', 10000], ['angle', 'angle_deg', 360], ['screw', 'pitch_mm', 1000]]) {
       if ((m.type === type || m[field] !== undefined) && (!finite(m[field]) || m[field] < 0 || m[field] > max || (type === 'screw' && m[field] === 0))) errors.push(`${w}.${field}: valor válido requerido para ${type}`);
     }
@@ -240,7 +245,9 @@ export function checkAssemblyPlan(plan) {
         if (kind === 'cylinder' && f.diameter_mm !== undefined && !(finite(f.diameter_mm) && f.diameter_mm > 0)) errors.push(`${ew}.find.diameter_mm: > 0`);
         for (const k of ['normal', 'axis', 'near_mm']) if (f[k] !== undefined && !vector(f[k])) errors.push(`${ew}.find.${k}: vector de 3 números`);
         if (f.index !== undefined && !(Number.isInteger(f.index) && f.index >= 0)) errors.push(`${ew}.find.index: entero >= 0`);
-        if (kind === 'plane' && f.normal === undefined && f.offset_mm === undefined) warnings.push(`${ew}: find de plano sin normal ni offset_mm; probablemente será ambiguo`);
+        if (f.extreme !== undefined && !/^[+-][xyz]$/i.test(f.extreme)) errors.push(`${ew}.find.extreme: +x|-x|+y|-y|+z|-z`);
+        if (f.pick !== undefined && !['largest', 'smallest', 'outermost'].includes(f.pick)) errors.push(`${ew}.find.pick: largest|smallest|outermost`);
+        if (kind === 'plane' && f.normal === undefined && f.offset_mm === undefined && f.extreme === undefined && f.pick === undefined && f.feature === undefined) warnings.push(`${ew}: find de plano sin normal ni offset_mm; probablemente será ambiguo`);
       }
       if (!(plane || assembly || geom || find) || e.point_mm !== undefined) errors.push(`${ew}: {component,plane}, {assembly_plane}, {component,local_point_mm,kind:face|edge} o {component,find:{kind,diameter_mm|normal,...}}`);
     }
@@ -564,8 +571,8 @@ async function assemblyBuildOnce(args, { worker, signal, root } = {}) {
     if (args.batch !== false) {
       // v3.7: everything in ONE worker call (assembly_batch): one safe-edit check instead of two per item, no mass inspection per item
       await timed('batch', async () => {
-        const comps = plan.components.map((c, i) => ({ id: c.id, path: files[i], fixed: c.fixed ?? false, ...(c.position_mm ? { position_mm: c.position_mm } : {}), ...(c.transform ? { transform: c.transform } : {}), ...(c.configuration ? { configuration: c.configuration } : {}) }));
-        const ms = plan.mates.map(m => { const a = { type: m.type, align: m.align ?? 'closest', flip: m.flip ?? false, entities: m.entities.map(e => ({ ...e })) }; if (m.name) a.name = m.name; for (const k of ['distance_mm', 'angle_deg', 'pitch_mm', 'lock_rotation', 'suppressed']) if (m[k] !== undefined) a[k] = m[k]; return a; });
+        const comps = plan.components.map((c, i) => ({ id: c.id, path: files[i], fixed: c.fixed ?? false, ...(c.position_mm ? { position_mm: c.position_mm } : {}), ...(c.transform ? { transform: c.transform } : {}), ...(c.configuration ? { configuration: c.configuration } : {}), ...(c.fit_box ? { fit_box: c.fit_box } : {}) }));
+        const ms = plan.mates.map(m => { const a = { type: m.type, align: m.align ?? 'closest', flip: m.flip ?? false, entities: m.entities.map(e => ({ ...e })) }; if (m.name) a.name = m.name; for (const k of ['distance_mm', 'angle_deg', 'pitch_mm', 'lock_rotation', 'suppressed', 'expect']) if (m[k] !== undefined) a[k] = m[k]; return a; });
         // stop_on_error: the worker throws at the first failure, so the safe edit rolls the whole batch back (no partial assembly)
         // v3.8 defer_rebuild: one rebuild after the last mate instead of one per mate; every mate is still checked by name
         const r = await docCall('assembly_batch', { components: comps, mates: ms, stop_on_error: !args.continue_on_error, ...(args.defer_rebuild ? { defer_rebuild: true } : {}) });
@@ -579,7 +586,7 @@ async function assemblyBuildOnce(args, { worker, signal, root } = {}) {
     } else {
       await timed('components', async () => {
         for (const [i, c] of plan.components.entries()) {
-          const r = await docCall('insert_component', { path: files[i], fixed: c.fixed ?? false, ...(c.position_mm ? { position_mm: c.position_mm } : {}), ...(c.transform ? { transform: c.transform } : {}), ...(c.configuration ? { configuration: c.configuration } : {}) });
+          const r = await docCall('insert_component', { path: files[i], fixed: c.fixed ?? false, ...(c.position_mm ? { position_mm: c.position_mm } : {}), ...(c.transform ? { transform: c.transform } : {}), ...(c.configuration ? { configuration: c.configuration } : {}), ...(c.fit_box ? { fit_box: c.fit_box } : {}) });
           if (!text(r.component) || [...components.values()].includes(r.component)) throw new Error(`insert_component: nombre real inválido para ${c.id}`);
           components.set(c.id, r.component);
           if (r.fixed_position !== (c.fixed ?? false)) throw new Error(`insert_component: fixed no coincide para ${c.id}`);
@@ -593,6 +600,7 @@ async function assemblyBuildOnce(args, { worker, signal, root } = {}) {
             // v3.7 review: {component, find} resolved by the worker with the same rules as the batch path
             for (const [j, e] of a.entities.entries()) if (e.find) a.entities[j] = await docCall('find_faces', { component: e.component, find: e.find, resolve: true });
             for (const k of ['distance_mm', 'angle_deg', 'pitch_mm', 'lock_rotation']) if (m[k] !== undefined) a[k] = m[k];
+            if (m.expect) a.expect = { ...m.expect, component: components.get(m.expect.component) };
             const r = await docCall('add_mate', a);
             moved.push({ ...currentMate, moved_components: r.moved_components ?? [] });
             if (r.snapped?.length) (checked.warnings ??= []).push(...r.snapped.map(s => `${m.name ?? 'mate ' + index}: ${s}`));
@@ -716,6 +724,10 @@ async function assemblyBuildOnce(args, { worker, signal, root } = {}) {
         reference: { ...(ex.mass ? { mass: ex.mass.value } : {}), ...(cm ? { center_of_mass: cm.value } : {}) } });
       suspects.push({ mass_or_com: true, causes: r.comparison?.causes ?? r.causes ?? [], notes: r.notes ?? [] });
     } catch (e) { suspects.push({ mass_or_com: true, error: e.message }); }
+    // v3.11: close hidden, saved leftovers (parts opened to insert them, subassembly internals) before the last check. The jet
+    // engine reached 52 open documents with 2.5 GB of free RAM and every call slowed down. Never closes visible or unsaved
+    // documents (the assembly just saved keeps its parts). keep_open skips it.
+    if (!args.keep_open) try { const h = await call('session_health', { action: 'cleanup' }); verification.cleanup = { closed: h.closed?.length ?? 0, documents_left: h.documents, free_ram_gb: h.system_ram_free_gb }; } catch { }
     // This must be the last CAD call. Detection can move components and block subsequent saving.
     await verify('interference', async () => {
       const r = await docCall('interference', { max_pairs: 1000 });
@@ -724,8 +736,12 @@ async function assemblyBuildOnce(args, { worker, signal, root } = {}) {
       else if (plan.expect?.interferences_mm3 !== undefined) {
         // v3.8: overlaps under 0.05 mm3 (the comparison tolerance) are round-off, e.g. a 60 degree pattern on holes typed to 4
         // decimals left 0.002 mm3 per peg; they are reported as a warning, not as a failed build
-        const noise = r.pairs.filter(p => p.volume_mm3 < 0.05 && !plan.expect.interferences_mm3.some(v => v < 0.05));
-        if (noise.length) checked.warnings.push(`${noise.length} interferencias menores a 0.05 mm3 (redondeo numérico, máx ${Math.max(...noise.map(p => p.volume_mm3)).toFixed(4)} mm3) no cuentan`);
+        const tiny = r.pairs.filter(p => p.volume_mm3 < 0.05 && !plan.expect.interferences_mm3.some(v => v < 0.05));
+        if (tiny.length) checked.warnings.push(`${tiny.length} interferencias menores a 0.05 mm3 (redondeo numérico, máx ${Math.max(...tiny.map(p => p.volume_mm3)).toFixed(4)} mm3) no cuentan`);
+        // v3.11: a generated bolt's thread in its tap-drill hole is not a clash unless the plan lists it (count_thread: true)
+        const thread = plan.expect.count_thread ? [] : r.pairs.filter(p => p.kind === 'thread_engagement');
+        if (thread.length) checked.warnings.push(`${thread.length} enganches de rosca (tornillo sin rosca en barreno roscado, ${thread.map(p => p.volume_mm3.toFixed(2)).join(', ')} mm3) no cuentan`);
+        const noise = [...tiny, ...thread];
         // indices of the filtered list are mapped back to r.pairs, so the suspects below look at the right pair (Codex review)
         const kept = r.pairs.map((p, i) => ({ p, i })).filter(x => !noise.includes(x.p));
         differences.push(...compareInterferences(kept.map(x => x.p.volume_mm3), plan.expect.interferences_mm3).map(d => d.quantity === 'interference_extra_mm3' ? { ...d, index: kept[d.index].i } : d));

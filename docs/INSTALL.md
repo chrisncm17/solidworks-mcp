@@ -14,6 +14,16 @@
 pip install pypdf pillow
 ```
 
+## Quick install (one line)
+
+```powershell
+powershell -ExecutionPolicy Bypass -File install.ps1                 # checks, npm install, build, tests, register in every client found
+powershell -ExecutionPolicy Bypass -File install.ps1 -Clients claude-code,codex -SkipTests
+powershell -ExecutionPolicy Bypass -File install.ps1 -WhatIf          # show what it would do, change nothing
+```
+
+Every client config it edits is backed up first (`<file>.antes-solidworks-mcp-<date>.bak`); an existing `solidworks` entry is replaced only with `-Force`. The manual steps below do the same by hand.
+
 ## 2. Build
 
 ```powershell

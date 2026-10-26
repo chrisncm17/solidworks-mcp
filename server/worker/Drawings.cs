@@ -42,6 +42,7 @@ partial class Worker {
    result=new{changed=changed.ToArray(),note="Unsaved; call sw_save after reviewing.",summary=DrawingSummary(d)};return true;
   }
   if(action=="section"){result=SectionView(a,d,dr);return true;}
+  if(action=="detail"){result=DetailView(a,d,dr);return true;}
   // action == set: one view on one sheet
   string sheet=Str(a,"sheet"),viewName=Str(a,"view");
   if(!((string[])dr.GetSheetNames()).Contains(sheet))throw new Exception("Sheet not found: "+sheet);

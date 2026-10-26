@@ -193,6 +193,10 @@ partial class Worker {
   if(TryAssemblyRepair(op,a,doc,out extra))return extra;
   if(TryAnalysis(op,a,doc,out extra))return extra;
   if(TryDrawings(op,a,doc,out extra))return extra;
+  if(TryDrawingDimension(op,a,doc,out extra))return extra;
+  if(TryCombine(op,a,doc,out extra))return extra;
+  if(TryWrapBoundary(op,a,doc,out extra))return extra;
+  if(op=="preview")return Preview(doc,a);
   if(doc.GetType()!=1&&!new[]{"inspect","save","preview","export","checkpoint","compare_volume","set_dimension"}.Contains(op))throw new Exception("This tool requires a managed part, not an assembly or drawing");
   if(TryModel(op,a,doc,out extra))return extra;
   if(TryFeatures(op,a,doc,out extra))return extra;
@@ -206,7 +210,6 @@ partial class Worker {
   if(op=="tangent") {var feature=SketchFeature(doc,Str(a,"sketch"));doc.ClearSelection2(true);feature.Select2(false,0);try{doc.EditSketch();var sketch=(ISketch)feature.GetSpecificFeature2();var segs=(object[])sketch.GetSketchSegments()??new object[0];int relationCount=((object[])sketch.RelationManager.GetRelations(0)??new object[0]).Length;doc.ClearSelection2(true); ((ISketchSegment)segs[Convert.ToInt32(a["first"])]).Select2(false,0); if(Convert.ToInt32(a["second"])!=Convert.ToInt32(a["first"]))((ISketchSegment)segs[Convert.ToInt32(a["second"])]).Select2(true,0); doc.SketchAddConstraints(a.ContainsKey("constraint")?Str(a,"constraint"):"sgTANGENT");if(((object[])sketch.RelationManager.GetRelations(0)??new object[0]).Length<=relationCount)throw new Exception("No new constraint was added; it may already exist or be incompatible");}finally{if(doc.SketchManager.ActiveSketch!=null)doc.SketchManager.InsertSketch(true);}doc.ForceRebuild3(false);return Checked(doc);}
   if(op=="set_dimension") {var dim=(IDimension)doc.Parameter(Str(a,"name"));if(dim==null)throw new Exception("Dimension not found");double value=Num(a,"value_si");if(double.IsNaN(value)||double.IsInfinity(value)||value<0)throw new Exception("Invalid dimension (negative)");int setResult=dim.SetSystemValue3(value,1,null);if(setResult!=0)throw new Exception("Dimension assignment rejected: "+setResult);doc.ForceRebuild3(false);if(Math.Abs(dim.SystemValue-value)>Math.Max(1e-10,Math.Abs(value)*1e-8))throw new Exception("Dimension did not retain requested value");return Checked(doc);}
   if(op=="geometry") {var faces=new List<object>();object[] bodies=(object[])((IPartDoc)doc).GetBodies2(0,false)??new object[0];int index=0;foreach(IBody2 b in bodies)foreach(IFace2 face in (object[])b.GetFaces()){ISurface surface=(ISurface)face.GetSurface();var edges=new List<object>();foreach(IEdge edge in (object[])face.GetEdges()){ICurve curve=(ICurve)edge.GetCurve();edges.Add(new{circle=curve.IsCircle(),circle_params=curve.IsCircle()?curve.CircleParams:null,start=((IVertex)edge.GetStartVertex())==null?null:((IVertex)edge.GetStartVertex()).GetPoint(),end=((IVertex)edge.GetEndVertex())==null?null:((IVertex)edge.GetEndVertex()).GetPoint()});}faces.Add(new{index=index++,area_mm2=face.GetArea()*1e6,box_m=face.GetBox(),cylinder=surface.IsCylinder()?surface.CylinderParams:null,plane=surface.IsPlane()?surface.PlaneParams:null,edges=edges});}return faces;}
-  if(op=="preview") {if(doc.GetType()!=3)doc.ShowNamedView2("",7);doc.ViewZoomtofit2();string path=Path.Combine(Root,Guid.NewGuid().ToString("N")+"-preview.bmp");if(!doc.SaveBMP(path,1200,900))throw new Exception("Preview failed");string png=Path.ChangeExtension(path,".png");using(var bitmap=new System.Drawing.Bitmap(path)){bitmap.Save(png,System.Drawing.Imaging.ImageFormat.Png);}File.Delete(path);return new{path=png};}
   if(op=="set_material"){
    string database=Str(a,"database"),material=Str(a,"material");((IPartDoc)doc).SetMaterialPropertyName2("",database,material);doc.ForceRebuild3(false);string actualDb="";string actual=((IPartDoc)doc).GetMaterialPropertyName2("",out actualDb);if(actual!=material)throw new Exception("Material assignment did not match requested material");return Checked(doc);
   }
@@ -221,7 +224,7 @@ partial class Worker {
     // Referenced parts/subassemblies marked modified (e.g. converted from an older SolidWorks version): back up every
     // one outside the managed folder FIRST, then save them, so Pack and Go can copy saved files.
     var dirty=new Dictionary<string,IModelDoc2>(StringComparer.OrdinalIgnoreCase);
-    foreach(IComponent2 cc in (object[])((IAssemblyDoc)doc).GetComponents(false)??new object[0]){var md=cc.GetModelDoc2() as IModelDoc2;if(md!=null&&md.GetSaveFlag()&&!string.IsNullOrEmpty(md.GetPathName()))dirty[md.GetPathName()]=md;}
+    foreach(var md in DirtyReferenceDocs(doc))dirty[md.GetPathName()]=md;
     var blocked=dirty.Keys.Where(k=>recoveryPending.Contains(k)).ToArray();if(blocked.Length>0)throw new Exception("Saving is blocked for references altered by interference detection: "+string.Join(", ",blocked.Select(Path.GetFileName))+". Nothing was saved.");
     // Codex review: a reference is saved only after a FULL rebuild check and a clean health (a body-less part is refused too)
      foreach(var kv in dirty){try{Checked(kv.Value,true,false);var hp=HealthProblems(Health(kv.Value,true));if(hp.Count>0&&!allowErrors)throw new Exception(string.Join("; ",hp));}catch(Exception ex){throw new Exception("Reference "+Path.GetFileName(kv.Key)+" has rebuild errors; nothing was saved. "+ex.Message);}}
@@ -231,6 +234,15 @@ partial class Worker {
     refsSaved=new{saved=saved.ToArray(),backup=backup};}
    int e=0,w=0;bool ok=doc.Save3(1,ref e,ref w);if(!ok||e!=0)throw new Exception("Save failed "+e);if(DiskRestore().Remove(doc.GetPathName()))SaveDiskRestore();keptBaseline.Remove(doc.GetPathName());return new{path=doc.GetPathName(),warnings=w,references=refsSaved,saved_with_problems=problems.ToArray(),inspection=Inspect(doc)};}
   throw new Exception("Unknown operation: "+op);
+ }
+ // v3.11: every open document the assembly/drawing depends on (all levels) that SolidWorks marks modified. Components only gave the
+ // ones reachable through loaded components; parts of nested subassemblies opened hidden kept their flag and blocked Pack and Go.
+ static List<IModelDoc2> DirtyReferenceDocs(IModelDoc2 doc){
+  var r=new Dictionary<string,IModelDoc2>(StringComparer.OrdinalIgnoreCase);
+  try{if(doc.GetType()==2)foreach(IComponent2 cc in (object[])((IAssemblyDoc)doc).GetComponents(false)??new object[0]){var md=cc.GetModelDoc2() as IModelDoc2;if(md!=null&&md.GetSaveFlag()&&!string.IsNullOrEmpty(md.GetPathName()))r[md.GetPathName()]=md;}}catch{}
+  try{var deps=sw.GetDocumentDependencies2(doc.GetPathName(),true,false,false) as string[]??new string[0];
+   for(int i=1;i<deps.Length;i+=2){var od=sw.GetOpenDocumentByName(deps[i]) as IModelDoc2;if(od!=null&&od.GetSaveFlag()&&!string.IsNullOrEmpty(od.GetPathName()))r[od.GetPathName()]=od;}}catch{}
+  return r.Values.ToList();
  }
  [STAThread]static void Main(){
   System.Threading.Thread.CurrentThread.CurrentCulture=System.Globalization.CultureInfo.InvariantCulture;
