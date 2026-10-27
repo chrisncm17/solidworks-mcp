@@ -194,6 +194,7 @@ partial class Worker {
   if(TryAnalysis(op,a,doc,out extra))return extra;
   if(TryDrawings(op,a,doc,out extra))return extra;
   if(TryDrawingDimension(op,a,doc,out extra))return extra;
+  if(TryDrawingEdit(op,a,doc,out extra))return extra;
   if(TryCombine(op,a,doc,out extra))return extra;
   if(TryWrapBoundary(op,a,doc,out extra))return extra;
   if(op=="preview")return Preview(doc,a);

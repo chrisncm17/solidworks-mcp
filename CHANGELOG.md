@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.12.0 - 2026-10-27
+Found while redrawing a 2-sheet valve drawing to match a teacher's PDF; verified in SolidWorks 2026 SP3.2 on a backed-up drawing.
+- **New tool `sw_drawing_edit`:** `list` every dimension of a sheet (value, view, text position, colour), `move_text`, `delete` near a sheet point (e.g. bogus 90 deg angulars shown as 1570.796), `move_view`, `title_text` (list or replace title-block texts such as "SHEET 1 OF 1"), `hide_construction` (hidden layer) and `black` (B&W drawings).
+- **`sw_drawing_dimension add`:** turns off the "Modify" value dialog while dimensioning (it blocked the worker) and deletes an angular dimension SolidWorks makes instead of a horizontal/vertical one (circles seen edge-on), with an explanation.
+
 ## 3.11.0 - 2026-10-25
 Found while modelling a 51-file jet engine; every item verified in SolidWorks 2026 SP3.2 (`examples/v311_improvements.mjs`).
 - **Assemblies:** `sw_insert_components` inserts many parts in one call (rolls back all on a failure); `fit_box` places a part by where its body must span on an axis (exact body extremes, not the loose part box); `sw_add_mate expect` checks where a component must end and retries with the other side; `sw_move_component allow_fixed` moves a fixed part and fixes it again; `sw_find_faces` by description (`extreme: "+y"`, `inclined`, `feature`, `pick: largest|smallest|outermost`), also in `sw_assembly_build` plans; plan files may live in subfolders.

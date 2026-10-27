@@ -155,15 +155,21 @@ partial class Worker {
   d.ClearSelection2(true);
   for(int k=0;k<idx.Length;k++)if(!view.SelectEntity(edges[idx[k]].Edge,k>0))throw new Exception("Cannot select edge "+idx[k]+" in "+view.Name);
   object ddo=null;
-  switch(type){
-   case "horizontal":ddo=d.AddHorizontalDimension2(pos[0],pos[1],0);break;
-   case "vertical":ddo=d.AddVerticalDimension2(pos[0],pos[1],0);break;
-   case "diameter":ddo=d.AddDiameterDimension2(pos[0],pos[1],0);break;
-   case "radius":ddo=d.AddRadialDimension2(pos[0],pos[1],0);break;
-   default:ddo=d.AddDimension2(pos[0],pos[1],0);break;}
-  d.ClearSelection2(true);
+  // the "Modify" value dialog (swInputDimValOnCreate) blocks the worker until someone clicks it
+  bool prompt=sw.GetUserPreferenceToggle((int)swUserPreferenceToggle_e.swInputDimValOnCreate);
+  try{sw.SetUserPreferenceToggle((int)swUserPreferenceToggle_e.swInputDimValOnCreate,false);
+   switch(type){
+    case "horizontal":ddo=d.AddHorizontalDimension2(pos[0],pos[1],0);break;
+    case "vertical":ddo=d.AddVerticalDimension2(pos[0],pos[1],0);break;
+    case "diameter":ddo=d.AddDiameterDimension2(pos[0],pos[1],0);break;
+    case "radius":ddo=d.AddRadialDimension2(pos[0],pos[1],0);break;
+    default:ddo=d.AddDimension2(pos[0],pos[1],0);break;}}
+  finally{sw.SetUserPreferenceToggle((int)swUserPreferenceToggle_e.swInputDimValOnCreate,prompt);d.ClearSelection2(true);}
   var dd=ddo as IDisplayDimension;if(dd==null)throw new Exception("SolidWorks did not create the "+type+" dimension; try another type or edges (probe shows their kind)");
   var dim=(IDimension)dd.GetDimension2(0);double sv=dim.SystemValue;bool ang=dd.Type2==(int)swDimensionType_e.swAngularDimension||type=="angle";
+  // edge-on circles (seen as lines) picked for a horizontal/vertical dimension give a 90 deg angular instead (shown as 1570.796)
+  if(ang&&type!="angle"&&type!="smart"){var an=(IAnnotation)dd.GetAnnotation();if(an.Select3(false,null))d.Extension.DeleteSelection2(0);d.ClearSelection2(true);
+   throw new Exception("SolidWorks made an angular dimension ("+Math.Round(sv*180/Math.PI,2)+" deg) instead of a "+type+" one, usually from circles seen edge-on; it was deleted. Pick straight line edges (probe kind=line) or the circle in another view.");}
   d.EditRebuild3();
   return new{view=view.Name,type=type,edges=idx,value=ang?Math.Round(sv*180/Math.PI,4):Math.Round(sv*1000,4),unit=ang?"deg":"mm",name=dim.FullName,
    text_on_sheet_mm=new[]{Math.Round(pos[0]*1000,1),Math.Round(pos[1]*1000,1)},note="Driven (reference) dimension of the drawing; unsaved until sw_save. Check placement with sw_preview."};

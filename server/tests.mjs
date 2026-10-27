@@ -1417,6 +1417,17 @@ test('v3.10: detail view, manual drawing dimensions, labelled preview and combin
   bad('sw_drawing_dimension', { document_id: 'd', action: 'add', sheet: 'Hoja1', view: 'V' });
   bad('sw_drawing_dimension', { document_id: 'd', action: 'add', sheet: 'Hoja1', view: 'V', edges: [1, 2, 3] });
   bad('sw_drawing_dimension', { document_id: 'd', action: 'probe', sheet: 'Hoja1', view: 'V', edges: [1] });
+  ok('sw_drawing_edit', { document_id: 'd', action: 'list', sheet: 'Hoja1' });
+  ok('sw_drawing_edit', { document_id: 'd', action: 'delete', sheet: 'Hoja1', near_mm: [120, 80], value: 1570.796 });
+  ok('sw_drawing_edit', { document_id: 'd', action: 'move_text', sheet: 'Hoja1', near_mm: [120, 80], radius_mm: 5, to_mm: [130, 90] });
+  ok('sw_drawing_edit', { document_id: 'd', action: 'move_view', sheet: 'Hoja1', view: 'V1', by_mm: [10, -5] });
+  ok('sw_drawing_edit', { document_id: 'd', action: 'title_text', sheet: 'Hoja1', find: 'HOJA 1 DE 1', replace: 'HOJA 1 DE 2' });
+  ok('sw_drawing_edit', { document_id: 'd', action: 'black', sheet: 'Hoja1', notes: true });
+  bad('sw_drawing_edit', { document_id: 'd', action: 'delete', sheet: 'Hoja1' });
+  bad('sw_drawing_edit', { document_id: 'd', action: 'move_text', sheet: 'Hoja1', near_mm: [1, 2] });
+  bad('sw_drawing_edit', { document_id: 'd', action: 'move_view', sheet: 'Hoja1', view: 'V1', by_mm: [1, 2], to_mm: [3, 4] });
+  bad('sw_drawing_edit', { document_id: 'd', action: 'title_text', sheet: 'Hoja1', replace: 'x' });
+  bad('sw_drawing_edit', { document_id: 'd', action: 'list' });
   ok('sw_preview', { document_id: 'd' });
   ok('sw_preview', { document_id: 'd', views: ['front', 'top', 'iso'], label_faces: true, max_labels: 30 });
   bad('sw_preview', { document_id: 'd', views: ['side'] });
