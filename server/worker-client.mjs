@@ -39,7 +39,9 @@ export class WorkerClient {
   // The caller gets an error at once, the operation keeps running in SolidWorks, the next calls wait behind it, and its real
   // response is kept in this.late (server.mjs hands it to the next tool response as late_results). Only a worker silent for
   // hardTimeoutMs is killed.
-  call(operation, args, { signal } = {}) {
+  // timeoutMs: per-call soft timeout (0 = none; the hard timeout still applies). Builds use 0: they already run as a tracked job,
+  // and a 68-mate assembly_batch passed 150 s, so the build gave up and left the assembly open, unsaved and unverified.
+  call(operation, args, { signal, timeoutMs = this.timeoutMs } = {}) {
     const request = JSON.stringify({ operation, arguments: args }) + '\n';
     let t0 = 0, onStart = () => {};
     const run = this.chain.then(() => {
@@ -67,7 +69,7 @@ export class WorkerClient {
       // a request still waiting in the queue is simply not run (run checks signal.aborted when its turn comes)
       const abort = () => { if (started) leave('cancelled'); };
       // the timeout counts from the moment SolidWorks starts this request, not while it waits behind others
-      onStart = () => { started = true; if (!settled) timer = setTimeout(() => leave(`still running after ${Math.round(this.timeoutMs / 1000)} s`), this.timeoutMs); };
+      onStart = () => { started = true; if (!settled && timeoutMs > 0) timer = setTimeout(() => leave(`still running after ${Math.round(timeoutMs / 1000)} s`), timeoutMs); };
       const cleanup = () => { clearTimeout(timer); signal?.removeEventListener('abort', abort); };
       signal?.addEventListener('abort', abort, { once: true });
       run.then(r => {

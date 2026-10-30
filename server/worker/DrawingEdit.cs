@@ -10,8 +10,10 @@ using SolidWorks.Interop.swconst;
 //  delete            deletes dimensions near a sheet point (optionally only one value), e.g. bogus 90° angulars (1570.796)
 //  move_view         moves a view by a delta or to a centre point
 //  title_text        lists or replaces texts of the sheet format (title block), e.g. "HOJA 1 DE 1" -> "HOJA 1 DE 2"
+//  title_fields      title / drawing no. / automatic sheet numbers INSIDE the sheet format (linked to properties), one .slddrt for all sheets
 //  hide_construction puts construction lines/points of the sheet and view sketches on a hidden layer
 //  black             makes every dimension (and optionally note) of the sheet black (B&W drawings)
+//  color             same as black with color "#RRGGBB" (e.g. royal blue dimensions); texts: only those notes (e.g. red part names)
 partial class Worker {
  class SheetDim{public IView View;public IDisplayDimension Dd;public double Value;public bool Ang;public double[] Pos;}
  static List<SheetDim> SheetDimensions(IDrawingDoc dr,string onlyView){
@@ -65,6 +67,39 @@ partial class Worker {
    d.EditRebuild3();
    result=new{sheet=sheet,replaced=n,format_notes=find==null?found.ToArray():found.Where(t=>t.Contains(find)||(n>0&&Str(a,"replace")!=""&&t.Contains(Str(a,"replace")))).ToArray(),
     note=a.ContainsKey("replace")?"Unsaved until sw_save. Format notes can be $PRP links; only literal text is replaced.":"List only; give find and replace to change text."};return true;}
+  // v3.13 title_fields: title-block fields go INSIDE the sheet format (never as loose sheet notes, the classmates' complaint
+  // "no hizo formato de hoja"): drawing properties, "HOJA x DE y" -> automatic sheet number/total, new format notes linked to
+  // properties ($PRP:"Titulo") styled like an existing format text, loose sheet notes with the given texts removed on every sheet,
+  // and with save_format_to (.slddrt next to the drawing) the edited format is saved and reloaded on every sheet (one format).
+  if(action=="title_fields"){var log=new List<string>();var names=(string[])dr.GetSheetNames();
+   Func<INote[]> fmtNotes=()=>((object[])((IView)dr.GetFirstView()).GetNotes()??new object[0]).Cast<INote>().Where(n=>((IAnnotation)n.GetAnnotation()).OwnerType==(int)swAnnotationOwner_e.swAnnotationOwner_DrawingTemplate).ToArray();
+   string fmtOut=a.ContainsKey("save_format_to")?Str(a,"save_format_to"):null;
+   if(fmtOut!=null&&(!System.IO.Path.IsPathRooted(fmtOut)||!fmtOut.EndsWith(".slddrt",StringComparison.OrdinalIgnoreCase)||!string.Equals(System.IO.Path.GetDirectoryName(fmtOut),System.IO.Path.GetDirectoryName(d.GetPathName()),StringComparison.OrdinalIgnoreCase)))
+    throw new Exception("save_format_to must be an absolute .slddrt in the drawing's own folder");
+   if(a.ContainsKey("properties")){var cpm=d.Extension.get_CustomPropertyManager("");
+    foreach(var kv in (Dictionary<string,object>)a["properties"]){cpm.Add3(kv.Key,(int)swCustomInfoType_e.swCustomInfoText,Convert.ToString(kv.Value),(int)swCustomPropertyAddOption_e.swCustomPropertyReplaceValue);log.Add("property "+kv.Key+" = "+kv.Value);}}
+   if(a.ContainsKey("remove_loose"))foreach(string s in names){dr.ActivateSheet(s);
+    foreach(string t in Items(a["remove_loose"]).Select(Convert.ToString))foreach(var n in ((object[])((IView)dr.GetFirstView()).GetNotes()??new object[0]).Cast<INote>())
+     if(((IAnnotation)n.GetAnnotation()).OwnerType!=(int)swAnnotationOwner_e.swAnnotationOwner_DrawingTemplate&&n.GetText().Trim()==t.Trim()){d.ClearSelection2(true);((IAnnotation)n.GetAnnotation()).Select3(false,null);
+      if(d.Extension.DeleteSelection2(0))log.Add(s+": loose note '"+t+"' removed");}
+    d.ClearSelection2(true);}
+   dr.ActivateSheet(sheet);dr.EditTemplate();
+   try{var notes=fmtNotes();
+    if(!a.ContainsKey("auto_sheet_numbers")||Flag(a,"auto_sheet_numbers"))foreach(var n in notes){string raw=n.PropertyLinkedText;var m=System.Text.RegularExpressions.Regex.Match(raw,@"^(.*?)HOJA\s+\d+\s+DE\s+\d+",System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+     if(m.Success){n.SetText(m.Groups[1].Value+"HOJA $PRP:\"SW-Current Sheet\" DE $PRP:\"SW-Total Sheets\"");log.Add("sheet numbers automatic: "+n.PropertyLinkedText);}}
+    if(a.ContainsKey("fields"))foreach(var f in Items(a["fields"]).Cast<Dictionary<string,object>>()){string text=Str(f,"text");var p=MmPair(f,"position_mm");
+     if(notes.Any(n=>n.PropertyLinkedText.Replace("<FONT style=B>","")==text)){log.Add("already in format: "+text);continue;}
+     d.ClearSelection2(true);var nn=(INote)d.InsertNote(text);if(nn==null)throw new Exception("InsertNote failed for "+text);var an=(IAnnotation)nn.GetAnnotation();
+     if(an.OwnerType!=(int)swAnnotationOwner_e.swAnnotationOwner_DrawingTemplate)throw new Exception("The note did not land in the sheet format");
+     an.SetPosition2(p[0]/1000,p[1]/1000,0);
+     if(f.ContainsKey("style_from")){var src=notes.FirstOrDefault(n=>n.GetText().Contains(Str(f,"style_from")));if(src!=null)an.SetTextFormat(0,false,((IAnnotation)src.GetAnnotation()).GetTextFormat(0));}
+     log.Add("format field "+text+" = "+nn.GetText());}}
+   finally{d.ClearSelection2(true);dr.EditSheet();}
+   if(fmtOut!=null){if(!((ISheet)dr.GetCurrentSheet()).SaveFormat(fmtOut))throw new Exception("SaveFormat failed: "+fmtOut);
+    foreach(string s in names){dr.ActivateSheet(s);var sh=(ISheet)dr.GetCurrentSheet();sh.SetTemplateName(fmtOut);sh.ReloadTemplate(false);log.Add(s+" uses "+System.IO.Path.GetFileName(sh.GetTemplateName()));}
+    dr.ActivateSheet(sheet);}
+   d.ForceRebuild3(false);
+   result=new{sheet=sheet,changes=log.ToArray(),note="Title-block fields live in the sheet format, linked to drawing properties. Unsaved until sw_save. Check with sw_preview."};return true;}
   if(action=="hide_construction"){string layer=a.ContainsKey("layer")?Str(a,"layer"):"CONSTRUCCION_OCULTA";var lm=(ILayerMgr)d.GetLayerManager();
    if(lm.GetLayer(layer)==null)lm.AddLayer(layer,"",0,0,0);((ILayer)lm.GetLayer(layer)).Visible=false;int segs=0,pts=0;
    var views=new List<IView>{(IView)dr.GetFirstView()};views.AddRange(SheetViews(dr));
@@ -72,12 +107,20 @@ partial class Worker {
     foreach(ISketchSegment s in (object[])sk.GetSketchSegments()??new object[0])if(s.ConstructionGeometry){s.Layer=layer;segs++;}
     foreach(ISketchPoint q in (object[])sk.GetSketchPoints2()??new object[0]){try{q.Layer=layer;pts++;}catch{}}}
    d.GraphicsRedraw2();result=new{sheet=sheet,layer=layer,construction_segments=segs,points=pts,note="Dimensions on hidden construction lines stay visible. Unsaved until sw_save."};return true;}
-  if(action=="black"){bool notes=a.ContainsKey("notes")&&Convert.ToBoolean(a["notes"]);int dims=0,nn=0;
+  if(action=="black"||action=="color"){bool notes=a.ContainsKey("notes")&&Convert.ToBoolean(a["notes"]);int dims=0,nn=0;
+   int col=0,rgb;string hex="#000000";
+   if(action=="color"){hex=a.ContainsKey("color")?Str(a,"color").Trim():"";var hx=hex.TrimStart('#');
+    if(hx.Length!=6||!int.TryParse(hx,System.Globalization.NumberStyles.HexNumber,null,out rgb))throw new Exception("color needs color: \"#RRGGBB\" (e.g. \"#4169E1\" royal blue)");
+    col=((rgb&0xFF)<<16)|(rgb&0xFF00)|((rgb>>16)&0xFF);}// SolidWorks wants COLORREF (0x00BBGGRR)
+   // texts: only the notes whose whole text is one of these (e.g. part names), dimensions untouched
+   var texts=a.ContainsKey("texts")?new HashSet<string>(Items(a["texts"]).Select(x=>Convert.ToString(x).Trim()),StringComparer.OrdinalIgnoreCase):null;var hit=new List<string>();
    var views=new List<IView>{(IView)dr.GetFirstView()};views.AddRange(SheetViews(dr));
    foreach(var v in views)foreach(var o in (object[])v.GetAnnotations()??new object[0]){var an=o as IAnnotation;if(an==null)continue;int t=an.GetType();
-    if(t==(int)swAnnotationType_e.swDisplayDimension){an.Color=0;dims++;}
-    else if(notes&&t==(int)swAnnotationType_e.swNote&&!((INote)an.GetSpecificAnnotation()).IsBomBalloon()){an.Color=0;nn++;}}
-   d.GraphicsRedraw2();result=new{sheet=sheet,dimensions=dims,notes=nn,note="An overridden value still shows magenta in SolidWorks; hide the value and use a prefix text instead. Unsaved until sw_save."};return true;}
-  throw new Exception("action: list, move_text, delete, move_view, title_text, hide_construction or black");
+    if(t==(int)swAnnotationType_e.swDisplayDimension){if(texts==null){an.Color=col;dims++;}}
+    else if((notes||texts!=null)&&t==(int)swAnnotationType_e.swNote){var nt=(INote)an.GetSpecificAnnotation();if(nt.IsBomBalloon())continue;
+     if(texts!=null&&!texts.Contains((nt.GetText()??"").Trim()))continue;an.Color=col;nn++;hit.Add(nt.GetText());}}
+   if(texts!=null&&nn==0)throw new Exception("No note on sheet "+sheet+" has exactly one of these texts: "+string.Join(", ",texts));
+   d.GraphicsRedraw2();result=new{sheet=sheet,color=hex,dimensions=dims,notes=nn,notes_colored=texts!=null?hit.ToArray():null,note="An overridden value still shows magenta in SolidWorks; hide the value and use a prefix text instead. Unsaved until sw_save."};return true;}
+  throw new Exception("action: list, move_text, delete, move_view, title_text, title_fields, hide_construction, black or color");
  }
 }

@@ -92,7 +92,9 @@ async function handleCall(request, extra) {
       // v3.11: a build is not stopped by a client timeout/cancel (it used to stop half way, between two worker calls). It runs as
       // a tracked job (other calls wait for it) and, when the client already gave up, its result arrives as late_results.
       const { trackJob } = await import('./assembly_build.mjs'); const { compactBuildResult } = await import('./compact.mjs');
-      const run = (tool.operation === 'assembly_build' ? assemblyBuild : partBuild)(args, { worker, root: GENERATED });
+      // v3.14: no per-call soft timeout inside a build (each worker call waits for SolidWorks; only the hard timeout stops it)
+      const buildWorker = Object.create(worker, { call: { value: (op, a, o = {}) => worker.call(op, a, { ...o, timeoutMs: 0 }) } });
+      const run = (tool.operation === 'assembly_build' ? assemblyBuild : partBuild)(args, { worker: buildWorker, root: GENERATED });
       trackJob(`${tool.operation}:${args.plan?.name ?? args.ir?.part ?? Date.now()}`, run);
       try {
         const result = await run; if (args.action === 'build') try { recordStep(GENERATED, summarize(tool.operation, args, result)); } catch { }

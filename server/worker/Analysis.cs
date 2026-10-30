@@ -86,10 +86,51 @@ partial class Worker {
    bool verified=failed.Length==0&&missing.Length==0;
    string zip=null;if(a.ContainsKey("zip")&&Convert.ToBoolean(a["zip"])&&verified){zip=dest+".zip";System.IO.Compression.ZipFile.CreateFromDirectory(dest,zip,System.IO.Compression.CompressionLevel.Optimal,true);}
    long bytes=Directory.GetFiles(dest).Sum(f=>new FileInfo(f).Length);
-   result=new{destination=dest,main_document=main,files_copied=Directory.GetFiles(dest).Length,size_mb=Math.Round(bytes/1048576.0,1),failed=failed,references=refs.Count,references_missing_in_package=missing,stored_paths_pointing_elsewhere=storedOutside,zip=zip,zip_mb=zip==null?(double?)null:Math.Round(new FileInfo(zip).Length/1048576.0,1),
-    ok=verified,references_saved_first=autoSaved.ToArray(),isolated_open_verified=false,note="ok = every document copied and every referenced file present (non-empty) in the package. An isolated open was NOT performed: close documents with the same names and open the packed main file to confirm. stored_paths_pointing_elsewhere is informational (last-saved paths)."};
+   object delivery=null;bool delivered=true;if(a.ContainsKey("deliver_to")&&verified)delivery=Deliver(d,a,files,out delivered);
+   result=new{delivery=delivery,destination=dest,main_document=main,files_copied=Directory.GetFiles(dest).Length,size_mb=Math.Round(bytes/1048576.0,1),failed=failed,references=refs.Count,references_missing_in_package=missing,stored_paths_pointing_elsewhere=storedOutside,zip=zip,zip_mb=zip==null?(double?)null:Math.Round(new FileInfo(zip).Length/1048576.0,1),
+    ok=verified&&delivered,references_saved_first=autoSaved.ToArray(),isolated_open_verified=false,note="ok = every document copied and every referenced file present (non-empty) in the package. An isolated open was NOT performed: close documents with the same names and open the packed main file to confirm. stored_paths_pointing_elsewhere is informational (last-saved paths)."};
    return true;
   }
   return false;
+ }
+ // v3.14 delivery (motor lineal, was Deliver.exe): after the verified package, a second Pack and Go straight into a NEW folder of
+ // the user's Downloads, with the main file and parts renamed (rename {old file name: new file name}); every reference of the
+ // delivered main file must be inside it. zip: also <folder>.zip beside it. open_visible: close the managed source (the same part
+ // names cannot be open twice) and open the delivery in this SolidWorks, visible and maximized. The opened delivery is NOT a
+ // managed document (no document_id): it is the user's file.
+ static object Deliver(IModelDoc2 d,Dictionary<string,object> a,string[] files,out bool delivered){
+  string downloads=Path.GetFullPath(Path.Combine(System.Environment.GetFolderPath(System.Environment.SpecialFolder.UserProfile),"Downloads"));
+  string to=Path.GetFullPath(Str(a,"deliver_to"));
+  if(!Path.IsPathRooted(Str(a,"deliver_to"))||!to.StartsWith(downloads+Path.DirectorySeparatorChar,StringComparison.OrdinalIgnoreCase)||Path.GetDirectoryName(to).TrimEnd('\\')!=downloads.TrimEnd('\\'))throw new Exception("deliver_to: a new folder directly inside "+downloads);
+  if(Directory.Exists(to)||File.Exists(to)||File.Exists(to+".zip"))throw new Exception("deliver_to already exists (never overwritten): "+to);
+  var ren=new Dictionary<string,string>(StringComparer.OrdinalIgnoreCase);
+  if(a.ContainsKey("rename"))foreach(var kv in (Dictionary<string,object>)a["rename"]){string nv=Convert.ToString(kv.Value);if(nv.IndexOfAny(Path.GetInvalidFileNameChars())>=0||!Path.GetExtension(nv).Equals(Path.GetExtension(kv.Key),StringComparison.OrdinalIgnoreCase))throw new Exception("rename "+kv.Key+": a file name with the same extension");ren[kv.Key]=nv;}
+  string mainSrc=d.GetPathName();if(a.ContainsKey("main_name")){string mn=Str(a,"main_name");if(mn.IndexOfAny(Path.GetInvalidFileNameChars())>=0)throw new Exception("main_name: a file name");if(!Path.HasExtension(mn))mn+=Path.GetExtension(mainSrc);ren[Path.GetFileName(mainSrc)]=mn;}
+  var dst=files.Select(f=>Path.Combine(to,ren.ContainsKey(Path.GetFileName(f))?ren[Path.GetFileName(f)]:Path.GetFileName(f))).ToArray();
+  var dup=dst.GroupBy(x=>x,StringComparer.OrdinalIgnoreCase).Where(g=>g.Count()>1).Select(g=>Path.GetFileName(g.Key)).ToArray();if(dup.Length>0)throw new Exception("rename gives two files the same name: "+string.Join(", ",dup));
+  var unknown=ren.Keys.Where(k=>!files.Any(f=>Path.GetFileName(f).Equals(k,StringComparison.OrdinalIgnoreCase))).ToArray();if(unknown.Length>0)throw new Exception("rename: not in the package: "+string.Join(", ",unknown));
+  Directory.CreateDirectory(to);
+  var pg=(PackAndGo)d.Extension.GetPackAndGo();pg.IncludeDrawings=false;pg.IncludeSimulationResults=false;pg.IncludeToolboxComponents=true;pg.FlattenToSingleFolder=true;
+  object names;pg.GetDocumentNames(out names);var src=(string[])names??new string[0];
+  var map=src.Select(f=>dst[Array.FindIndex(files,x=>x.Equals(f,StringComparison.OrdinalIgnoreCase))]).ToArray();
+  if(!pg.SetSaveToName(true,to)||!pg.SetDocumentSaveToNames(map))throw new Exception("Pack and Go could not take the new names");
+  var st=(int[])d.Extension.SavePackAndGo(pg)??new int[0];
+  string main=map[Array.FindIndex(src,x=>x.Equals(mainSrc,StringComparison.OrdinalIgnoreCase))];
+  var deps=sw.GetDocumentDependencies2(main,true,false,false) as string[]??new string[0];var refs=new List<string>();for(int i=1;i<deps.Length;i+=2)refs.Add(deps[i]);
+  var outside=refs.Where(r=>!Path.GetDirectoryName(Path.GetFullPath(r)).Equals(to,StringComparison.OrdinalIgnoreCase)||!File.Exists(r)).ToArray();
+  bool ok=st.All(x=>x==0)&&File.Exists(main)&&outside.Length==0;delivered=ok;
+  string zip=null;if(ok&&a.ContainsKey("zip")&&Convert.ToBoolean(a["zip"])){zip=to+".zip";System.IO.Compression.ZipFile.CreateFromDirectory(to,zip,System.IO.Compression.CompressionLevel.Optimal,true);}
+  bool opened=false;string openNote=null;
+  if(ok&&a.ContainsKey("open_visible")&&Convert.ToBoolean(a["open_visible"])){
+   // close the source and its open managed parts first (same names cannot be open twice); never a document with unsaved changes
+   var closing=new List<string>{mainSrc};closing.AddRange(src);
+   foreach(var p in closing.Distinct(StringComparer.OrdinalIgnoreCase)){var od=sw.GetOpenDocumentByName(p) as IModelDoc2;if(od==null||od.GetSaveFlag()||!InsideRoot(od.GetPathName()))continue;
+    foreach(var k in owned.Where(kv=>ReferenceEquals(kv.Value,od)).Select(kv=>kv.Key).ToList())owned.Remove(k);sw.CloseDoc(od.GetTitle());}
+   int e=0,w=0;var o=(IModelDoc2)sw.OpenDoc6(main,main.EndsWith(".slddrw",StringComparison.OrdinalIgnoreCase)?3:2,0,"",ref e,ref w);
+   if(o!=null){sw.ActivateDoc3(o.GetTitle(),false,0,ref e);try{o.ShowNamedView2("",7);}catch{}o.ViewZoomtofit2();sw.Visible=true;sw.FrameState=(int)swWindowState_e.swWindowMaximized;opened=true;}
+   else openNote="OpenDoc6 failed ("+e+"); open "+main+" by hand";
+  }
+  return new{ok=ok,folder=to,main_document=main,files=map.Select(Path.GetFileName).ToArray(),references_outside=outside,zip=zip,opened_visible=opened,open_note=openNote,
+   note=opened?"The source was closed (its document_id is no longer valid); the delivery is open, visible and maximized, and is not a managed document.":null};
  }
 }

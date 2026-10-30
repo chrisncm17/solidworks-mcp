@@ -1,6 +1,6 @@
 # Tools
 
-112 tools. Generated from `server/tools.mjs` by `npm run tools` - do not edit by hand.
+114 tools. Generated from `server/tools.mjs` by `npm run tools` - do not edit by hand.
 
 ## Session and documents
 
@@ -747,7 +747,7 @@ Low-level batch used by sw_assembly_build: insert components [{id,path,fixed,pos
 
 ### `sw_assembly_build`
 
-Batch assembly compiler. check validates without SolidWorks. build uses parts_dir plus plan, never overwrites generated/assemblies/<name>.SLDASM, inserts components and creates mates in order, then coordinate systems and units, saves, verifies mates/assembly_doctor/mass_check, and calls interference LAST (never saves afterwards). On mate failure returns zero-based index, plan name, error and previous moved_components; continue_on_error continues only while the worker outcome is known. Plan: {ir:"assembly-ir/1",name,components:[{id,file,fixed?,position_mm?,transform?,configuration?}],mates:[{name?,type,entities:[{component,plane}\|{assembly_plane}\|{component,local_point_mm,kind:"face"\|"edge"}],align?,flip?,distance_mm?,angle_deg?,pitch_mm?,lock_rotation?,suppressed?}],coordinate_systems?:[{name?,origin_mm,x_axis,y_axis}],units?:{mass_length,mass,volume,decimals},expect?:{mates?,mass?:{value,units:"g"\|"kg"\|"lb"},com?:[{coordinate_system,value:[x,y,z],length_units:"mm"\|"cm"\|"m"\|"in"}],interferences_mm3?:[]}}. Mate types: coincident/concentric/distance/parallel/perpendicular/angle/tangent/screw need 2 entities; symmetric 3, width 4. distance needs distance_mm, angle angle_deg, screw pitch_mm. Prefer align aligned/anti_aligned; closest warns. transform is rigid ArrayData 16 in SI and preserves exported orientation; position_mm must agree if both supplied. Coordinate system names are logical aliases mapped to new default tree names; expect can also use one-based #1, #2. Mass/CM tolerance defaults 0.5 percent (CM also 0.05 mm absolute); interference comparison is an unordered multiset within 1 percent or 0.05 mm3. Verdict pass means all requested numerical/health checks passed, not visual/material certification. No renaming. v3.8 tornilleria: component {id, make:{type:"bolt"\|"washer"\|"nut"\|"countersunk", size:"M3".."M20", length_mm (bolt; overall for countersunk), material}} generates the ISO 4017/7089/4032/10642 part (countersunk head goes flush with head_side) in generated (simplified: no thread) if missing; mate {intent:"fastener", bolt, washer?, nut?, nut_washer?, size?, hole:{component,find}, head_side:{component,find plane}, nut_side, repeat?} expands to seat (coincident anti_aligned) + coaxial (concentric) for each piece, with # and index # per repeat. Kits: plan.kits {name:{components, mates with "@slot"}} and mate {use:name, at:{hole, head_side, nut_side}, repeat, material}; save_kits writes plan.kits to generated/kits/<name>.json to reuse later; built-in kits tornilleria_M8x30 (bolt+washer+nut), tornillo_tuerca_M8x30, tornillo_rondana_M8x30, tornillo_M8x30. v3.8 patterns: plan.patterns [{kind:"circular"\|"linear", seeds:[component ids already mated], count (including the seeds), axis\|direction:{component id, local_point_mm, kind:"face"\|"edge"}, total_angle_deg\|spacing_mm, reverse}] run after the mates with sw_component_pattern: mate only the seeds (24 pegs = 4 seeds and one circular pattern instead of 48 mates; measured 49 s instead of 130 s). Interferences under 0.05 mm3 are round-off and only warn; a pattern instance outside the box of the components that existed before it fails (pattern_outside, try reverse). expect.symmetric ["x","y"] checks CM = 0 on the symmetry axes of a symmetric drawing (needs no reference values). check returns expanded counts.
+Batch assembly compiler. check validates without SolidWorks. build uses parts_dir plus plan, never overwrites generated/assemblies/<name>.SLDASM, inserts components and creates mates in order, then coordinate systems and units, saves, verifies mates/assembly_doctor/mass_check, and calls interference LAST (never saves afterwards). On mate failure returns zero-based index, plan name, error and previous moved_components; continue_on_error continues only while the worker outcome is known. Plan: {ir:"assembly-ir/1",name,components:[{id,file,fixed?,position_mm?,transform?,configuration?}],mates:[{name?,type,entities:[{component,plane}\|{assembly_plane}\|{component,local_point_mm,kind:"face"\|"edge"}],align?,flip?,distance_mm?,angle_deg?,pitch_mm?,lock_rotation?,suppressed?}],coordinate_systems?:[{name?,origin_mm,x_axis,y_axis}],units?:{mass_length,mass,volume,decimals},expect?:{mates?,mass?:{value,units:"g"\|"kg"\|"lb"},com?:[{coordinate_system,value:[x,y,z],length_units:"mm"\|"cm"\|"m"\|"in"}],interferences_mm3?:[]}}. Mate types: coincident/concentric/distance/parallel/perpendicular/angle/tangent/screw need 2 entities; symmetric 3, width 4. distance needs distance_mm, angle angle_deg, screw pitch_mm. Prefer align aligned/anti_aligned; closest warns. transform is rigid ArrayData 16 in SI and preserves exported orientation; position_mm must agree if both supplied. Coordinate system names are logical aliases mapped to new default tree names; expect can also use one-based #1, #2. Mass/CM tolerance defaults 0.5 percent (CM also 0.05 mm absolute); interference comparison is an unordered multiset within 1 percent or 0.05 mm3. Verdict pass means all requested numerical/health checks passed, not visual/material certification. No renaming. v3.8 tornilleria: component {id, make:{type:"bolt"\|"washer"\|"nut"\|"countersunk", size:"M3".."M20", length_mm (bolt; overall for countersunk), material}} generates the ISO 4017/7089/4032/10642 part (countersunk head goes flush with head_side) in generated (simplified: no thread) if missing; mate {intent:"fastener", bolt, washer?, nut?, nut_washer?, size?, hole:{component,find}, head_side:{component,find plane}, nut_side, repeat?} expands to seat (coincident anti_aligned) + coaxial (concentric) for each piece, with # and index # per repeat. Kits: plan.kits {name:{components, mates with "@slot"}} and mate {use:name, at:{hole, head_side, nut_side}, repeat, material}; save_kits writes plan.kits to generated/kits/<name>.json to reuse later; built-in kits tornilleria_M8x30 (bolt+washer+nut), tornillo_tuerca_M8x30, tornillo_rondana_M8x30, tornillo_M8x30. v3.8 patterns: plan.patterns [{kind:"circular"\|"linear", seeds:[component ids already mated], count (including the seeds), axis\|direction:{component id, local_point_mm, kind:"face"\|"edge"}, total_angle_deg\|spacing_mm, reverse}] run after the mates with sw_component_pattern: mate only the seeds (24 pegs = 4 seeds and one circular pattern instead of 48 mates; measured 49 s instead of 130 s). Interferences under 0.05 mm3 are round-off and only warn; a pattern instance outside the box of the components that existed before it fails (pattern_outside, try reverse). expect.symmetric ["x","y"] checks CM = 0 on the symmetry axes of a symmetric drawing (needs no reference values). v3.14: worker calls inside a build have no 150 s soft timeout (a 68-mate batch used to leave the assembly open, unsaved and unverified); every component with position_mm or transform is compared with where it ended (verification.posture; a warning, expect.posture true or {tolerance_mm, tolerance_deg} makes it a failure) because a mate on the wrong side gives 0 mate errors; plan.auto_expect true or {tolerance_mm} (default 1) makes every distance/coincident mate check that the component it moves stays at its position_mm and retries it flipped once (use flip:true on a mate to choose the other side yourself); 20 or more components with less than 3 GB of free RAM warns. check returns expanded counts.
 
 | Option | Type / values | Required | Notes |
 |---|---|---|---|
@@ -1190,6 +1190,35 @@ v3.10 Manual dimensions on a managed DRAWING view (Cota inteligente). action pro
 | `position_mm` | array of number (>= -5000, <= 5000) (2) |  |  |
 | `keep_broken` | boolean |  | Keep the result even if it breaks other features/mates (default: it is undone automatically and verified). sw_save then refuses to save until fixed. |
 
+### `sw_drawing_edit`
+
+v3.13 Clean up a managed DRAWING sheet. action list: every dimension of the sheet (sheet sketch and views) with value (mm or deg), view, text position text_mm on the sheet and colour (value, view, near_mm+radius_mm filter). move_text: moves the dimension text near near_mm (radius_mm, default 10; value narrows it) to to_mm. delete: deletes dimensions near near_mm (value narrows it), e.g. a bogus 90 deg angular shown as 1570.796. move_view: view by by_mm [dx,dy] or to to_mm (new centre). title_text: lists the title-block (sheet format) texts, or replaces find with replace (e.g. HOJA 1 DE 1 -> HOJA 1 DE 2). title_fields: ALWAYS use this (never sw_drawing_note) for title-block data: sets drawing properties, turns HOJA x DE y into automatic sheet number/total, adds fields [{text like $PRP:"Titulo", position_mm, style_from}] INSIDE the sheet format, removes loose sheet notes listed in remove_loose on every sheet, and save_format_to (.slddrt in the drawing folder) saves that format and reloads it on every sheet so all sheets share one real sheet format. hide_construction: construction lines/points of the sheet and view sketches go to a hidden layer. black: every dimension (notes=true: also notes, not balloons) black for B&W drawings; color: the same with color "#RRGGBB" (e.g. #4169E1 royal blue); with texts, only the notes whose whole text is in the list (e.g. red part names), not dimensions. All positions in sheet mm. Unsaved until sw_save.
+
+| Option | Type / values | Required | Notes |
+|---|---|---|---|
+| `document_id` | string | yes |  |
+| `action` | `list` \\| `move_text` \\| `delete` \\| `move_view` \\| `title_text` \\| `title_fields` \\| `hide_construction` \\| `black` \\| `color` | yes |  |
+| `color` | string |  |  |
+| `texts` | array of string |  |  |
+| `sheet` | string | yes |  |
+| `view` | string |  |  |
+| `value` | number (>= -100000, <= 100000) |  | dimension value in mm (deg for angles) |
+| `tolerance` | number (>= 0, <= 10) |  |  |
+| `near_mm` | array of number (>= -5000, <= 5000) (2) |  |  |
+| `radius_mm` | number (>= 0.1, <= 2000) |  |  |
+| `to_mm` | array of number (>= -5000, <= 5000) (2) |  |  |
+| `by_mm` | array of number (>= -5000, <= 5000) (2) |  |  |
+| `find` | string |  |  |
+| `replace` | string |  |  |
+| `layer` | string |  |  |
+| `notes` | boolean |  |  |
+| `properties` | object |  |  |
+| `fields` | array of object |  |  |
+| `remove_loose` | array of string |  |  |
+| `auto_sheet_numbers` | boolean |  |  |
+| `save_format_to` | string |  |  |
+| `keep_broken` | boolean |  | Keep the result even if it breaks other features/mates (default: it is undone automatically and verified). sw_save then refuses to save until fixed. |
+
 ### `sw_drawing_new`
 
 Low-level, used by sw_assembly_drawing: empty drawing from a DRWDOT template with a width_mm x height_mm sheet, saved at an absolute path inside generated/drawings (never overwritten).
@@ -1203,7 +1232,7 @@ Low-level, used by sw_assembly_drawing: empty drawing from a DRWDOT template wit
 
 ### `sw_drawing_note`
 
-Text notes on the active (or named) sheet of a managed drawing, not attached to a view: one note per line in lines, top-left at position_mm [x,y] from the sheet bottom-left, height_mm per line (default 3.5); each is read back. Unsaved until sw_save.
+Text notes on the active (or named) sheet of a managed drawing, not attached to a view (never for title-block data such as title, drawing number or HOJA x DE y: those go in the sheet format with sw_drawing_edit title_fields): one note per line in lines, top-left at position_mm [x,y] from the sheet bottom-left, height_mm per line (default 3.5); each is read back. Unsaved until sw_save.
 
 | Option | Type / values | Required | Notes |
 |---|---|---|---|
@@ -1294,6 +1323,18 @@ Measurement sheet (ficha de medidas) of ONE part read from a drawing. Every entr
 | `keep_broken` | boolean |  | Keep the result even if it breaks other features/mates (default: it is undone automatically and verified). sw_save then refuses to save until fixed. |
 
 ## Verification, export and delivery
+
+### `sw_appearance`
+
+v3.14 Part-level color (MaterialPropertyValues) without touching geometry, mass or the tree. On a managed part: rgb [r,g,b] from 0 to 1 and specular 0..1 (default 0.6). On a managed assembly: parts [{component (name like Biela-1 or prefix Biela: every instance), rgb, specular?}] colors the part file behind each component (all its instances). Unsaved until sw_save (assembly: include_references=true). part-ir/1 also takes appearance {rgb, specular?}.
+
+| Option | Type / values | Required | Notes |
+|---|---|---|---|
+| `document_id` | string | yes |  |
+| `rgb` | array of number (>= 0, <= 1) (3) |  |  |
+| `specular` | number (>= 0, <= 1) |  |  |
+| `parts` | array of object |  |  |
+| `keep_broken` | boolean |  | Keep the result even if it breaks other features/mates (default: it is undone automatically and verified). sw_save then refuses to save until fixed. |
 
 ### `sw_boundary`
 
@@ -1394,13 +1435,17 @@ READ-ONLY mass and center-of-mass verification of a part or assembly (exam check
 
 ### `sw_pack_and_go`
 
-Pack and Go a SAVED managed assembly or drawing into generated/packs/<folder_name> (flattened, includes referenced parts), then verify that every referenced file exists inside the package and optionally create <folder_name>.zip. Refuses existing destinations. Returns failures, missing references, sizes and how many stored last-saved paths still point elsewhere (informational; an isolated open loads from the package folder).
+Pack and Go a SAVED managed assembly or drawing into generated/packs/<folder_name> (flattened, includes referenced parts), then verify that every referenced file exists inside the package and optionally create <folder_name>.zip. Refuses existing destinations. Returns failures, missing references, sizes and how many stored last-saved paths still point elsewhere (informational; an isolated open loads from the package folder). v3.14 delivery: deliver_to (a NEW folder directly inside the user Downloads, never overwritten) packs it again there with main_name (new main file name) and rename {"old.SLDPRT":"new.SLDPRT"}, verifies every reference of the delivered main file is inside that folder, zip makes <deliver_to>.zip too, and open_visible closes the managed source (its document_id stops being valid; the same part names cannot be open twice) and opens the delivery visible and maximized (not a managed document).
 
 | Option | Type / values | Required | Notes |
 |---|---|---|---|
 | `document_id` | string | yes |  |
 | `folder_name` | string | yes |  |
 | `zip` | boolean |  |  |
+| `deliver_to` | string |  |  |
+| `main_name` | string |  |  |
+| `rename` | object |  |  |
+| `open_visible` | boolean |  |  |
 
 ### `sw_part_diff` (read-only)
 

@@ -219,7 +219,10 @@ export function resolveIR(ir) {
   // the first operation that makes geometry must add material (sketches and planes may come before it)
   const firstSolid = steps.find(st => !['sketch', 'plane'].includes(st.op));
   if (firstSolid && !(['extrude', 'revolve'].includes(firstSolid.op) || (firstSolid.op === 'sweep' && !firstSolid.args.cut)) || (firstSolid?.op === 'revolve' && firstSolid.args.cut)) errors.push('la primera operación sólida debe crear material (extrude, revolve o sweep)');
-  return { errors, warnings, params, steps, expect, material: ir?.material ?? null };
+  // v3.14 appearance {rgb [0..1 x3], specular?}: part-level color set after the material
+  const ap = ir?.appearance;
+  if (ap !== undefined && !(ap && Array.isArray(ap.rgb) && ap.rgb.length === 3 && ap.rgb.every(v => num(v) && v >= 0 && v <= 1) && (ap.specular === undefined || (num(ap.specular) && ap.specular >= 0 && ap.specular <= 1)))) errors.push('appearance: {rgb: [r, g, b] de 0 a 1, specular?: 0 a 1}');
+  return { errors, warnings, params, steps, expect, material: ir?.material ?? null, appearance: ap ?? null };
 }
 
 // ---------- helpers on topology (meters) ----------
@@ -354,10 +357,12 @@ export async function partBuild(args, { worker, signal, root } = {}) {
   try {
   const env = await call(worker, 'environment', {}, signal);
   const genDir = root ?? fileURLToPath(new URL('./generated', import.meta.url));
-  const name = existsSync(join(genDir, `${ir.part}.SLDPRT`)) && args.reuse ? `${ir.part}_${Date.now().toString(36)}.SLDPRT` : `${ir.part}.SLDPRT`;
+  // v3.14: a changed IR whose name is taken gets Name_2, Name_3... (was Name_<random>, e.g. Cigueñal_mvudwkzl)
+  let name = `${ir.part}.SLDPRT`;
+  if (args.reuse) for (let k = 2; existsSync(join(genDir, name)); k++) name = `${ir.part}_${k}.SLDPRT`;
   const id = (await call(worker, 'create_part', { name, template: args.template ?? env.default_part_template }, signal)).document_id;
   const built = [], planeIdx = {}, log = [];
-  let vol = 0;
+  let vol = 0, bodies = 0;
   try {
     for (const st of res.steps) {
       const rec = { id: st.id, op: st.op }, t0 = performance.now();
@@ -372,7 +377,7 @@ export async function partBuild(args, { worker, signal, root } = {}) {
         rec.sketch = s.sketch;
         if (st.op === 'sketch') { if (s.status !== 3) rec.note = [rec.note, `croquis no totalmente definido (estado ${s.status})`].filter(Boolean).join('; '); rec.s = +((performance.now() - t0) / 1000).toFixed(2); built.push(rec); continue; }
         const r = await call(worker, st.op === 'revolve' ? 'revolve' : st.op, { document_id: id, sketch: s.sketch, ...st.args }, signal);
-        rec.feature = r.feature; rec.volume_mm3 = r.inspection.volume_mm3;
+        rec.feature = r.feature; rec.volume_mm3 = r.inspection.volume_mm3; if (Array.isArray(r.inspection?.bodies)) rec.bodies = r.inspection.bodies.length;
       } else if (st.op === 'sweep') {
         const sk = x => built.find(b => b.id === x)?.sketch;
         const r = await call(worker, 'sweep', { document_id: id, path: sk(st.refs.path), ...(st.refs.profile ? { profile: sk(st.refs.profile) } : {}), ...st.args }, signal);
@@ -392,7 +397,7 @@ export async function partBuild(args, { worker, signal, root } = {}) {
       } else {
         const of = st.refs.of.map(x => built.find(b => b.id === x)?.feature);
         const extra = st.op === 'mirror' && st.refs.plane_of ? { plane_index: planeIdx[st.refs.plane_of] } : {};
-        const r = await call(worker, st.op, { document_id: id, features: of, ...st.args, ...extra }, signal); rec.feature = r.feature; rec.volume_mm3 = r.inspection.volume_mm3;
+        const r = await call(worker, st.op, { document_id: id, features: of, ...st.args, ...extra }, signal); rec.feature = r.feature; rec.volume_mm3 = r.inspection.volume_mm3; if (Array.isArray(r.inspection?.bodies)) rec.bodies = r.inspection.bodies.length;
       }
       // material must go the right way: adding ops add volume, removing ops remove it
       if (num(rec.volume_mm3)) {
@@ -405,11 +410,20 @@ export async function partBuild(args, { worker, signal, root } = {}) {
         if (removes && st.op !== 'fillet' && dv > 1e-9) log.push(`${st.id}: agregó material siendo una operación que quita`);
         vol = rec.volume_mm3;
       }
+      // v3.14 (motor lineal): the 342 mm pattern ran before the 114 mm one and left the 4th crank throw as a second body with no
+      // hint. A pattern/mirror that adds a body the IR does not expect stops here and says why.
+      const nb = num(rec.bodies) ? rec.bodies : null;
+      if (nb !== null) {
+        if (['linear_pattern', 'circular_pattern', 'mirror'].includes(st.op) && nb > bodies && (res.expect.bodies === undefined || nb > res.expect.bodies))
+          throw new Error(`${st.id}: el ${st.op} dejó ${nb} cuerpos (antes ${bodies}): una copia no toca material existente. Haz primero el patrón de paso corto (o el que une las copias), revisa espaciado y dirección, o declara expect.bodies si quieres varios cuerpos.`);
+        bodies = nb;
+      }
       rec.s = +((performance.now() - t0) / 1000).toFixed(2);
       built.push(rec);
     }
     const tm = performance.now();
     if (res.material?.name) await call(worker, 'set_material', { document_id: id, database: res.material.database ?? 'SOLIDWORKS Materials', material: res.material.name }, signal);
+    if (res.appearance) await call(worker, 'appearance', { document_id: id, rgb: res.appearance.rgb, ...(res.appearance.specular !== undefined ? { specular: res.appearance.specular } : {}) }, signal);
     // flex BEFORE linking: once a dimension has an equation, part_flex (rightly) leaves it alone
     let flex = null;
     if (args.flex_test) flex = await call(worker, 'part_flex', { document_id: id, ...(typeof args.flex_test === 'object' ? args.flex_test : {}) }, signal);

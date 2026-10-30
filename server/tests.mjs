@@ -907,6 +907,7 @@ async function assemblyFixture() {
   const { fileURLToPath } = await import('node:url');
   const generated = fileURLToPath(new URL('./generated/', import.meta.url)); fs.mkdirSync(generated, { recursive: true });
   const root = fs.mkdtempSync(path.join(generated, 'assembly-test-')), parts_dir = path.join(root, 'parts'); fs.mkdirSync(parts_dir);
+  process.once('exit', () => fs.rmSync(root, { recursive: true, force: true })); // mock fixtures only; don't leave them in generated/
   for (const file of ['base.SLDPRT', 'eje.SLDPRT']) fs.writeFileSync(path.join(parts_dir, file), 'mock CAD file; never opened');
   return { root, parts_dir, fs, path };
 }
@@ -922,7 +923,7 @@ function assemblyWorker(overrides = {}) {
       insert_component: () => ({ component: `real-${++inserts}`, fixed_position: a.fixed }),
       add_mate: () => ({ mate: `Coincidente${++mates}`, error_code: 0, moved_components: [{ component: 'real-2', origin_mm: [1, 2, 3] }] }),
       coordinate_system: () => ({ coordinate_system: `Sistema de coordenadas${++systems}`, verified: true }),
-      document_units: () => ({ set: true }), save: () => ({ saved: true }),
+      document_units: () => ({ set: true }), save: () => ({ saved: true }), inspect: () => ({ components: [] }),   // v3.14 posture
       mates: () => { if (a.action === 'suppress') { suppressed++; return {}; } return { mate_count: mates, errors: 0, warnings: 0, suppressed }; },
       assembly_doctor: () => ({ summary: { complete: true, missing_entries: 0, mate_errors: 0, over_defined: 0, whats_wrong_count: 0, free_components: 1 } }),
       mass_check: () => ({ mass: 100, center_of_mass: [1, 2, 3], coordinate_system: a.coordinate_system ?? 'model origin', units: { mass: a.mass_units, length: a.length_units }, warnings: [] }),
@@ -954,7 +955,7 @@ test('v3.7: build traduce ids, conserva orden/transform/config y no guarda tras 
   assert.equal(r.verification.mass_checks.length, 2); assert.equal(r.moved_components.length, 2);
   assert.ok(calls.every(c => c.options.signal === ctrl.signal));
   for (const v of Object.values(r.timings_ms)) assert.ok(Number.isFinite(v) && v >= 0);
-  assert.deepEqual(calls.map(c => c.op), ['environment','assembly_new','insert_component','insert_component','add_mate','add_mate','mates','coordinate_system','coordinate_system','document_units','save','mates','assembly_doctor','mass_check','mass_check','session_health','interference']);
+  assert.deepEqual(calls.map(c => c.op), ['environment','assembly_new','insert_component','insert_component','add_mate','add_mate','mates','coordinate_system','coordinate_system','document_units','save','mates','inspect','assembly_doctor','mass_check','mass_check','session_health','interference']);
   assert.deepEqual(calls.find(c => c.op === 'session_health').a, { action: 'cleanup' }); // v3.11: leftovers closed before the last check
 });
 
@@ -1496,4 +1497,69 @@ test('v3.11: new tools and options validate', () => {
   ok('sw_boundary', { document_id: 'x', profiles: ['A', 'B'], guides: ['G'], cut: false }); no('sw_boundary', { document_id: 'x', profiles: ['A'] });
   ok('sw_session_recipe', { action: 'export', id: 'mi-receta', notes: 'n' }); no('sw_session_recipe', { action: 'export', id: 'Mal Id' });
   ok('sw_assembly_build', { action: 'check', plan: {}, keep_open: true });
+});
+
+// v3.14 (motor lineal): side checks, final posture, appearance in the IR, delivery and clean names
+test('v3.14: auto_expect pone expect en distancias/coincidentes de la pieza que se mueve', async () => {
+  const { applyAutoExpect, checkAssemblyPlan } = await import('./assembly_build.mjs');
+  const plan = { ir: 'assembly-ir/1', name: 'm', auto_expect: { tolerance_mm: 0.5 }, components: [
+    { id: 'cig', file: 'c.SLDPRT', fixed: true }, { id: 'biela', file: 'b.SLDPRT', position_mm: [156, 44, 0] }, { id: 'tapa', file: 't.SLDPRT', position_mm: [156, 44, 0] }],
+    mates: [{ type: 'coincident', entities: [{ component: 'biela', plane: 'Alzado' }, { assembly_plane: 'Alzado' }] },
+      { type: 'distance', distance_mm: 156, entities: [{ component: 'biela', plane: 'Vista lateral' }, { assembly_plane: 'Vista lateral' }] },
+      { type: 'coincident', entities: [{ component: 'biela', plane: 'Vista lateral' }, { component: 'tapa', plane: 'Vista lateral' }] },
+      { type: 'concentric', entities: [{ component: 'biela', local_point_mm: [0, 0, 27], kind: 'face' }, { component: 'cig', local_point_mm: [156, 44, 27], kind: 'face' }] },
+      { type: 'distance', distance_mm: 1, flip: true, expect: { component: 'biela', origin_mm: [0, 0, 0] }, entities: [{ component: 'biela', plane: 'Planta' }, { assembly_plane: 'Planta' }] }] };
+  const p = applyAutoExpect(plan);
+  assert.deepEqual(p.mates[0].expect, { component: 'biela', origin_mm: [156, 44, 0], tolerance_mm: 0.5 });
+  assert.equal(p.mates[1].expect.component, 'biela');
+  assert.equal(p.mates[2].expect.component, 'tapa', 'la tapa no tenía relaciones: es la que se mueve');
+  assert.equal(p.mates[3].expect, undefined, 'concéntricas no');
+  assert.deepEqual(p.mates[4].expect, { component: 'biela', origin_mm: [0, 0, 0] }, 'un expect propio se respeta');
+  assert.equal(applyAutoExpect({ ...plan, auto_expect: false }).mates[0].expect, undefined, 'sin auto_expect no toca nada');
+  assert.deepEqual(checkAssemblyPlan(p).errors, []);
+  assert.ok(checkAssemblyPlan({ ...plan, auto_expect: 'si' }).errors.some(e => /auto_expect/.test(e)));
+  assert.ok(checkAssemblyPlan({ ...plan, expect: { posture: { tolerance_mm: -1 } } }).errors.some(e => /posture/.test(e)));
+});
+test('v3.14: postureDeviations detecta piezas giradas 180 o del otro lado con 0 errores', async () => {
+  const { postureDeviations } = await import('./assembly_build.mjs');
+  const comps = [{ id: 'a', position_mm: [156, 44, 0] }, { id: 'b', position_mm: [270, -44, 0] }, { id: 'c', position_mm: [10, 0, 0], fit_box: {} }, { id: 'd', transform: [0, 1, 0, -1, 0, 0, 0, 0, 1, 0.1, 0, 0, 1, 0, 0, 0] }];
+  const I = [1, 0, 0, 0, 1, 0, 0, 0, 1];
+  const actual = new Map([['a', [...I, 0.156, 0.044, 0]], ['b', [1, 0, 0, 0, -1, 0, 0, 0, -1, 0.270, -0.044, 0]], ['c', [...I, 9, 9, 9]], ['d', [0, 1, 0, -1, 0, 0, 0, 0, 1, -0.1, 0, 0]]]);
+  const dev = postureDeviations(comps, actual);
+  assert.deepEqual(dev.map(d => d.component), ['b', 'd']);
+  assert.equal(dev[0].rotated_deg, 180); assert.equal(dev[0].offset_mm, 0);
+  assert.equal(dev[1].offset_mm, 200); assert.equal(dev[1].rotated_deg, 0);
+  assert.deepEqual(postureDeviations(comps, actual, { tolerance_mm: 500, tolerance_deg: 181 }), []);
+});
+test('v3.14: expect.posture vuelve falla la postura; sin él solo avisa', async () => {
+  const f = await assemblyFixture();
+  const run = async expect => { const { worker } = assemblyWorker({ inspect: () => ({ ok: true, result: { components: [{ name: 'real-1', transform: [1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0] }, { name: 'real-2', transform: [-1, 0, 0, 0, -1, 0, 0, 0, 1, 0, 0, 0] }] } }) });
+    const plan = assemblyPlan(); plan.name = 'pose' + Math.random().toString(36).slice(2, 7); plan.components[1].position_mm = [0, 0, 0]; if (expect) plan.expect = { ...(plan.expect ?? {}), posture: true };
+    return assemblyBuild({ action: 'build', batch: false, plan, parts_dir: f.parts_dir }, { worker, root: f.root }); };
+  const warn = await run(false);
+  assert.ok(warn.warnings.some(w => /postura: 1 componentes/.test(w)), JSON.stringify(warn.warnings));
+  assert.equal(warn.verification.posture.off, 1);
+  const fail = await run(true);
+  assert.equal(fail.ok, false); assert.ok(fail.differences.some(d => d.quantity === 'posture' && d.components[0].rotated_deg === 180));
+});
+test('v3.14: IR appearance, sw_appearance y entrega de sw_pack_and_go', async () => {
+  const { resolveIR: R } = await import('./part_ir.mjs');
+  assert.deepEqual(R({ ...placa, appearance: { rgb: [0.96, 0.78, 0.4], specular: 0.9 } }).appearance, { rgb: [0.96, 0.78, 0.4], specular: 0.9 });
+  for (const bad of [{ rgb: [1, 1] }, { rgb: [0, 0, 255] }, { rgb: [0, 0, 0], specular: 2 }, 'rojo']) assert.ok(R({ ...placa, appearance: bad }).errors.some(e => /appearance/.test(e)), JSON.stringify(bad));
+  const ap = validate.get('sw_appearance');
+  assert.equal(ap({ document_id: 'x', rgb: [0.1, 0.2, 0.3] }), true);
+  assert.equal(ap({ document_id: 'x', parts: [{ component: 'Biela', rgb: [0.96, 0.78, 0.4], specular: 0.9 }] }), true);
+  assert.equal(ap({ document_id: 'x', rgb: [0.1, 0.2, 3] }), false);
+  const pg = validate.get('sw_pack_and_go');
+  assert.equal(pg({ document_id: 'x', folder_name: 'motor', deliver_to: 'C:\\Users\\u\\Downloads\\Motor lineal', main_name: 'Motor lineal.SLDASM', rename: { 'Cigueñal_2.SLDPRT': 'Cigueñal.SLDPRT' }, zip: true, open_visible: true }), true);
+  assert.equal(pg({ document_id: 'x', folder_name: 'motor', rename: { 'a.SLDPRT': 'sub\\b.SLDPRT' } }), false);
+  assert.equal(pg({ document_id: 'x', folder_name: 'motor', main_name: 'a/b' }), false);
+});
+test('v3.14: worker sin timeout suave cuando timeoutMs es 0', async () => {
+  const w = new WorkerClient({ timeoutMs: 20, executable: process.execPath, args: ['-e', "process.stdin.on('data',()=>setTimeout(()=>process.stdout.write(JSON.stringify({ok:true,result:1})+'\\n'),80))"] });
+  try {
+    await assert.rejects(w.call('x', {}), /still running/);
+    await new Promise(r => setTimeout(r, 120)); w.takeLate();
+    assert.deepEqual(await w.call('x', {}, { timeoutMs: 0 }), { ok: true, result: 1 });
+  } finally { w.close(); }
 });

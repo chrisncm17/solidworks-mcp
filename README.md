@@ -64,7 +64,7 @@ Ask your agent: *"Start SolidWorks with sw_exam_ready, then build a 100 x 60 x 1
 ## All tools
 
 <!-- tools:start -->
-**112 tools.** Every option of every tool: [docs/TOOLS.md](docs/TOOLS.md).
+**114 tools.** Every option of every tool: [docs/TOOLS.md](docs/TOOLS.md).
 
 <details><summary><b>Session and documents</b> (20)</summary>
 
@@ -172,7 +172,7 @@ Ask your agent: *"Start SolidWorks with sw_exam_ready, then build a 100 x 60 x 1
 
 </details>
 
-<details><summary><b>Drawings and reading drawings</b> (12)</summary>
+<details><summary><b>Drawings and reading drawings</b> (13)</summary>
 
 | Tool | What it does |
 |---|---|
@@ -182,8 +182,9 @@ Ask your agent: *"Start SolidWorks with sw_exam_ready, then build a 100 x 60 x 1
 | `sw_create_drawing` | Create a native drawing with three standard orthographic views of a SAVED managed part/assembly using a DRWDOT template. |
 | `sw_drawing_annotate` | Add the MODEL dimensions to drawing views (Insert Model Items: dimensions marked for drawing; |
 | `sw_drawing_dimension` | Manual dimensions on a managed DRAWING view (Cota inteligente). |
+| `sw_drawing_edit` | Clean up a managed DRAWING sheet. |
 | `sw_drawing_new` | Low-level, used by sw_assembly_drawing: empty drawing from a DRWDOT template with a width_mm x height_mm sheet, saved at an absolute path inside generated/drawings (never… |
-| `sw_drawing_note` | Text notes on the active (or named) sheet of a managed drawing, not attached to a view: one note per line in lines, top-left at position_mm [x,y] from the sheet bottom-le… |
+| `sw_drawing_note` | Text notes on the active (or named) sheet of a managed drawing, not attached to a view (never for title-block data such as title, drawing number or HOJA x DE y: those go … |
 | `sw_drawing_read` | action dimensions (PDF exported by SolidWorks, one page): for every linear dimension its direction (horizontal, vertical), its view (found from the geometry, no labels ne… |
 | `sw_drawing_sheets` | Sheets of a managed DRAWING. |
 | `sw_drawing_views` | DRAWING sheets and views. |
@@ -191,10 +192,11 @@ Ask your agent: *"Start SolidWorks with sw_exam_ready, then build a 100 x 60 x 1
 
 </details>
 
-<details><summary><b>Verification, export and delivery</b> (15)</summary>
+<details><summary><b>Verification, export and delivery</b> (16)</summary>
 
 | Tool | What it does |
 |---|---|
+| `sw_appearance` | Part-level color (MaterialPropertyValues) without touching geometry, mass or the tree. |
 | `sw_boundary` | Recubrir por limite (Boundary boss/cut): like sw_loft but each profile influences the whole shape, giving smoother transitions; |
 | `sw_combine` | Combinar bodies of a multibody managed part (Insertar > Operaciones > Combinar). |
 | `sw_compare_volume` | Compare measured solid volume against a positive target in mm^3 with an explicitly supplied tolerance percent. |

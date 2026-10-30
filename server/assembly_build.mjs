@@ -279,6 +279,8 @@ export function checkAssemblyPlan(plan) {
   }
   if (ex.interferences_mm3 !== undefined && (!Array.isArray(ex.interferences_mm3) || ex.interferences_mm3.some(v => !finite(v) || v < 0))) errors.push('expect.interferences_mm3: array de volúmenes >= 0');
   // v3.8 (Codex review): symmetric and patterns are validated here, not after the components and mates were built
+  if (ex.posture !== undefined && ex.posture !== true && !(object(ex.posture) && Object.entries(ex.posture).every(([k, v]) => ['tolerance_mm', 'tolerance_deg'].includes(k) && finite(v) && v > 0))) errors.push('expect.posture: true o {tolerance_mm?, tolerance_deg?}');
+  if (plan.auto_expect !== undefined && plan.auto_expect !== true && plan.auto_expect !== false && !(object(plan.auto_expect) && Object.entries(plan.auto_expect).every(([k, v]) => k === 'tolerance_mm' && finite(v) && v > 0))) errors.push('auto_expect: true o {tolerance_mm}');
   if (ex.symmetric !== undefined && (!Array.isArray(ex.symmetric) || !ex.symmetric.length || ex.symmetric.some(a => !['x', 'y', 'z'].includes(a)) || new Set(ex.symmetric).size !== ex.symmetric.length)) errors.push('expect.symmetric: ["x","y","z"] sin repetir');
   if (plan.patterns !== undefined && !Array.isArray(plan.patterns)) errors.push('patterns: array requerido');
   for (const [i, p] of (Array.isArray(plan.patterns) ? plan.patterns : []).entries()) {
@@ -297,6 +299,45 @@ export function checkAssemblyPlan(plan) {
 }
 
 // Maximum bipartite matching preserves multiplicity, including overlapping tolerance intervals.
+// v3.14 auto_expect (motor lineal): a distance/coincident mate that takes the other side still gives 0 mate errors (rods turned
+// 180 degrees, the whole train at -X). With auto_expect every such mate without its own expect checks that the component it moves
+// stays at its position_mm (tolerance_mm, default 1); if not, the worker retries it flipped once. The moved component is the one
+// with fewer earlier mates (tie: the last entity), not fixed, with position_mm and without fit_box.
+export function applyAutoExpect(plan) {
+  if (!object(plan) || !plan.auto_expect || !Array.isArray(plan.mates) || !Array.isArray(plan.components)) return plan;
+  const tol = object(plan.auto_expect) && finite(plan.auto_expect.tolerance_mm) ? plan.auto_expect.tolerance_mm : 1;
+  const byId = new Map(plan.components.filter(object).map(c => [c.id, c])), used = new Map();
+  const mates = plan.mates.map(m => {
+    if (!object(m) || !Array.isArray(m.entities)) return m;
+    const ids = m.entities.map(e => object(e) ? e.component : undefined).filter(id => byId.has(id));
+    let out = m;
+    if (['distance', 'coincident'].includes(m.type) && m.expect === undefined) {
+      const cand = ids.filter(id => { const c = byId.get(id); return !c.fixed && vector(c.position_mm) && !c.fit_box; });
+      if (cand.length) {
+        const pick = cand.reduce((best, id) => (used.get(id) ?? 0) <= (used.get(best) ?? 0) ? id : best);
+        out = { ...m, expect: { component: pick, origin_mm: byId.get(pick).position_mm, tolerance_mm: tol } };
+      }
+    }
+    for (const id of ids) used.set(id, (used.get(id) ?? 0) + 1);
+    return out;
+  });
+  return { ...plan, mates };
+}
+// v3.14 final posture: every component with position_mm/transform is compared with where it ended (origin in mm, rotation in
+// degrees). transform: 9 rotation numbers (any consistent layout) + translation in m, as sw_inspect returns them.
+export function postureDeviations(planComponents, actual, { tolerance_mm = 1, tolerance_deg = 1 } = {}) {
+  const out = [];
+  for (const c of planComponents) {
+    const t = actual.get(c.id);
+    if (!t || c.fit_box || (!vector(c.position_mm) && !Array.isArray(c.transform))) continue;
+    const want = vector(c.position_mm) ? c.position_mm : c.transform.slice(9, 12).map(v => v * 1000);
+    const R = Array.isArray(c.transform) ? c.transform.slice(0, 9) : [1, 0, 0, 0, 1, 0, 0, 0, 1];
+    const got = t.slice(9, 12).map(v => v * 1000), off = Math.hypot(...got.map((v, k) => v - want[k]));
+    const tr = R.reduce((s, v, k) => s + v * t[k], 0), deg = Math.acos(Math.max(-1, Math.min(1, (tr - 1) / 2))) * 180 / Math.PI;
+    if (off > tolerance_mm || deg > tolerance_deg) out.push({ component: c.id, expected_origin_mm: want, origin_mm: got.map(v => +v.toFixed(3)), offset_mm: +off.toFixed(3), rotated_deg: +deg.toFixed(2) });
+  }
+  return out;
+}
 export function compareInterferences(actual, expected) {
   if (![actual, expected].every(v => Array.isArray(v) && v.every(x => finite(x) && x >= 0))) throw new Error('Interferencias: volúmenes finitos >= 0 requeridos');
   const matched = new Map();
@@ -511,6 +552,7 @@ async function assemblyBuildOnce(args, { worker, signal, root } = {}) {
     if (bad.length) return { ok: false, verdict: 'fail', errors: bad.map(c => `${c.id}: up debe ser +X|-X|+Y|-Y|+Z|-Z y no va junto con transform`) };
     args = { ...args, plan: { ...args.plan, components: args.plan.components.map(c => object(c) && c.up !== undefined ? (({ up, ...rest }) => ({ ...rest, transform: [...UP[up], ...(vector(rest.position_mm) ? rest.position_mm.map(v => v / 1000) : [0, 0, 0]), 1, 0, 0, 0] }))(c) : c) } };
   }
+  if (args.plan) args = { ...args, plan: applyAutoExpect(args.plan) };
   const checked = checkAssemblyPlan(args.plan);
   if (replacedMates.length) checked.warnings = [...(checked.warnings || []), ...replacedMates.map(r => `${r.mate}: no reproducible (${r.reason}); ${r.component} se fija en su posición exportada`)];
   if (!['check', 'build'].includes(args.action)) checked.errors.push('action: check|build');
@@ -560,6 +602,9 @@ async function assemblyBuildOnce(args, { worker, signal, root } = {}) {
       if (realpathSync(folder).toLowerCase() !== join(realpathSync(root), 'assemblies').toLowerCase()) throw new Error('assemblies redirigida (junction): rechazado');
       output = join(folder, plan.name + '.SLDASM');
       if (existsSync(output)) throw new Error(`Nunca se sobrescribe: ${output}`);
+      // v3.14: the 37-component engine ran with 2.4 GB free and every call slowed down; say so before building
+      if (plan.components.length >= 20) try { const h = await call('session_health', {}); verification.free_ram_gb = h.system_ram_free_gb;
+        if (h.system_ram_free_gb < 3) (checked.warnings ??= []).push(`RAM libre ${h.system_ram_free_gb} GB con ${plan.components.length} componentes: SolidWorks irá lento; cierra programas o documentos (sw_session_health cleanup) si tarda`); } catch { }
     });
     await timed('assembly_new', async () => {
       const env = await call('environment', {});
@@ -675,6 +720,19 @@ async function assemblyBuildOnce(args, { worker, signal, root } = {}) {
       const suppressed = plan.mates.filter(m => m.suppressed).length;
       if (r.suppressed !== suppressed) differences.push({ quantity: 'suppressed_mates', expected: suppressed, actual: r.suppressed ?? null });
       if (r.warnings) checked.warnings.push(`mates: ${r.warnings} avisos`);
+    });
+    // v3.14: 0 mate errors does not prove the assembly is right (motor lineal: rods turned 180 degrees, train at -X). Warning by
+    // default (position_mm is often only a starting guess); expect.posture makes it a difference.
+    await verify('posture', async () => {
+      const p = plan.expect?.posture;
+      let listed; try { listed = (await docCall('inspect', {})).components ?? []; } catch (e) { if (p) throw e; verification.posture = { error: e.message }; return; }
+      const real = new Map(listed.filter(c => c.transform).map(c => [c.name, c.transform]));
+      const actual = new Map([...components].filter(([, n]) => real.has(n)).map(([id, n]) => [id, real.get(n)]));
+      const dev = postureDeviations(plan.components, actual, object(p) ? p : {});
+      verification.posture = { checked: actual.size, off: dev.length };
+      if (!dev.length) return;
+      if (p) differences.push({ quantity: 'posture', components: dev.slice(0, 12), hint: 'Quedaron girados o lejos de su position_mm sin error de relaciones: revisa el lado (flip/align) de sus relaciones o usa auto_expect.' });
+      else (checked.warnings ??= []).push(`postura: ${dev.length} componentes terminaron lejos de su position_mm o girados (${dev.slice(0, 6).map(d => `${d.component} ${d.offset_mm} mm/${d.rotated_deg}°`).join(', ')}); si position_mm era su lugar real, revisa flip/align o usa auto_expect / expect.posture`);
     });
     await verify('assembly_doctor', async () => {
       const r = await docCall('assembly_doctor', { include_dofs: true, only_problems: true }), s = r.summary;
