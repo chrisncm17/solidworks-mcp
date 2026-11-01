@@ -37,9 +37,13 @@ partial class Worker {
    try{
     d.ClearSelection2(true);
     foreach(var n in names){var sk=SketchFeature(d,n);if(!sk.Select2(true,1))throw new Exception("Could not select profile "+n);}
+    // v3.16 guides, a closed loft and how it leaves the first profile and reaches the last one
+    if(a.ContainsKey("guides"))foreach(var g in Items(a["guides"]).Select(Convert.ToString))if(!Feature(d,g).Select2(true,2))throw new Exception("Could not select the guide "+g);
+    short st=(short)(Str2(a,"start_constraint","none")=="normal"?1:0),en=(short)(Str2(a,"end_constraint","none")=="normal"?1:0);bool closed=Flag(a,"closed");
+    if(closed&&names.Count<3)throw new Exception("A closed loft needs at least 3 profiles");
     f=cut
-     ?d.FeatureManager.InsertCutBlend(false,true,false,1,0,0,false,0,0,0,true,true) as IFeature
-     :d.FeatureManager.InsertProtrusionBlend2(false,true,false,1,0,0,1,1,true,true,false,0,0,0,Flag(a,"merge",true),true,true,0) as IFeature;
+     ?d.FeatureManager.InsertCutBlend(closed,true,false,1,st,en,false,0,0,0,true,true) as IFeature
+     :d.FeatureManager.InsertProtrusionBlend2(closed,true,false,1,st,en,1,1,true,true,false,0,0,0,Flag(a,"merge",true),true,true,0) as IFeature;
    }finally{d.ClearSelection2(true);}
    if(f==null)throw new Exception("Loft failed: profiles must be closed, on different planes and in order"+(cut?", and the loft must intersect the body":""));
    result=new{feature=f.Name,inspection=Checked(d)};return true;

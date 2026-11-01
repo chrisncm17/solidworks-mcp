@@ -48,8 +48,10 @@ partial class Worker {
  // keep_broken: health before the breaking edit; sw_save refuses while the document still has those regressions
  static readonly Dictionary<string,Dictionary<string,object>> keptBaseline=new Dictionary<string,Dictionary<string,object>>(StringComparer.OrdinalIgnoreCase);
  static readonly HashSet<string> refsEdited=new HashSet<string>(StringComparer.OrdinalIgnoreCase);
- static readonly HashSet<string> Unguarded=new HashSet<string>{"save","checkpoint","export","preview","pack_and_go","close_document","interference","inspect","topology","geometry","sketch","relations","compare_volume","part_diff","mass_check","assembly_export","assembly_doctor","feature_info","find_faces","equations","status","environment","verify_rebuild"};
+ static readonly HashSet<string> Unguarded=new HashSet<string>{"save","checkpoint","export","preview","pack_and_go","close_document","interference","inspect","topology","geometry","sketch","relations","compare_volume","part_diff","mass_check","assembly_export","assembly_doctor","feature_info","find_faces","equations","status","environment","verify_rebuild","drawing_dim_geometry","drawing_dim_shapes","drawing_part_hollows","drawing_part_sizes"};
  static bool ReadOnlyAction(string op,Dictionary<string,object>a){
+  // v3.17 moving dimension texts touches nothing of the model: each try of a text must not cost a health check and a rollback copy of the drawing
+  if(op=="drawing_dim_apply"&&!a.ContainsKey("deletes")&&!a.ContainsKey("texts")&&!a.ContainsKey("view_moves"))return true;
   string act=a.ContainsKey("action")?Convert.ToString(a["action"]):null;
   if(act==null)return false;
   if(act=="list"||act=="read")return true;

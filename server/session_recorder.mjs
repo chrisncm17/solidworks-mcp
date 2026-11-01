@@ -7,7 +7,7 @@ import { join, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const RECIPES = process.env.SW_MCP_RECIPES_DIR ?? fileURLToPath(new URL('./recipes/', import.meta.url));
-const READ_ONLY = new Set(['status', 'environment', 'inspect', 'topology', 'geometry', 'sketch', 'relations', 'preview', 'mass_check', 'feature_info', 'find_faces', 'assembly_doctor', 'session_health', 'interference', 'drawing_read', 'measure_sheet', 'compare_volume', 'part_diff', 'equations', 'exam_ready', 'session_recipe', 'answer_sheet', 'instance', 'mates', 'collision', 'assembly_diff']);
+const READ_ONLY = new Set(['status', 'environment', 'inspect', 'topology', 'geometry', 'sketch', 'relations', 'preview', 'mass_check', 'feature_info', 'find_faces', 'assembly_doctor', 'session_health', 'interference', 'drawing_read', 'measure_sheet', 'compare_volume', 'part_diff', 'equations', 'exam_ready', 'session_recipe', 'answer_sheet', 'instance', 'mates', 'collision', 'assembly_diff', 'drawing_dim_geometry', 'drawing_dim_shapes', 'drawing_part_hollows', 'drawing_part_sizes']);
 let rec = null;          // { name, started, steps: [] }
 const docNames = new Map();   // document_id -> file name (learned from results)
 

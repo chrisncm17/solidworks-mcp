@@ -195,9 +195,11 @@ partial class Worker {
   if(TryDrawings(op,a,doc,out extra))return extra;
   if(TryDrawingDimension(op,a,doc,out extra))return extra;
   if(TryDrawingEdit(op,a,doc,out extra))return extra;
+  if(TryDimLayout(op,a,doc,out extra))return extra;
   if(TryCombine(op,a,doc,out extra))return extra;
   if(TryAppearance(op,a,doc,out extra))return extra;
   if(TryWrapBoundary(op,a,doc,out extra))return extra;
+  if(TryAdvanced(op,a,doc,out extra))return extra;
   if(op=="preview")return Preview(doc,a);
   if(doc.GetType()!=1&&!new[]{"inspect","save","preview","export","checkpoint","compare_volume","set_dimension"}.Contains(op))throw new Exception("This tool requires a managed part, not an assembly or drawing");
   if(TryModel(op,a,doc,out extra))return extra;

@@ -264,7 +264,10 @@ partial class Worker {
   }
   if(op=="fillet"||op=="chamfer"){
    string name=NewName(d,a);if(a.ContainsKey("edge_points_mm"))SelectEdgesAt(d,a["edge_points_mm"]);else if(a.ContainsKey("edge_references"))SelectEdges(d,a["edge_references"]);else throw new Exception("give edge_points_mm (a point on each edge, mm) or edge_references");IFeature f;
-   if(op=="fillet")f=d.FeatureManager.FeatureFillet3(2|(Flag(a,"tangent_propagation")?1:0),Num(a,"radius_mm")/1000,0,0,0,0,0,null,null,null,null,null,null,null) as IFeature;
+   // v3.16 variable radius: one edge, a radius at each of its two ends
+   if(op=="fillet"&&a.ContainsKey("end_radii_mm")){var rr=Items(a["end_radii_mm"]).Select(v=>Convert.ToDouble(v)/1000).ToArray();if(rr.Length!=2)throw new Exception("end_radii_mm is [radius at one end, radius at the other]");if(((ISelectionMgr)d.SelectionManager).GetSelectedObjectCount2(-1)!=1)throw new Exception("end_radii_mm works on exactly one edge");
+    f=d.FeatureManager.FeatureFillet3(Flag(a,"tangent_propagation")?1:0,rr.Max(),0,0,(int)swFeatureFilletType_e.swFeatureFilletType_VariableRadius,0,0,rr,null,null,null,null,null,null) as IFeature;}
+   else if(op=="fillet")f=d.FeatureManager.FeatureFillet3(2|(Flag(a,"tangent_propagation")?1:0),Num(a,"radius_mm")/1000,0,0,0,0,0,null,null,null,null,null,null,null) as IFeature;
    else f=d.FeatureManager.InsertFeatureChamfer(Flag(a,"tangent_propagation")?1:0,1,Num(a,"distance_mm")/1000,Num(a,"angle_deg")*Math.PI/180,0,0,0,0);
    if(f==null)throw new Exception(op+" failed; selected edges or size may be incompatible");Rename(f,name);result=new{feature=f.Name,inspection=Checked(d)};return true;
   }

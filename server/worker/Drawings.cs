@@ -53,6 +53,8 @@ partial class Worker {
    int mode=disp=="shaded"?(int)swDisplayMode_e.swSHADED:disp=="hidden_lines_removed"?(int)swDisplayMode_e.swHIDDEN:disp=="hidden_greyed"?(int)swDisplayMode_e.swHIDDEN_GREYED:(int)swDisplayMode_e.swWIREFRAME;
    view.SetDisplayMode4(false,mode,false,true,false);}
   d.EditRebuild3();
+  // an aligned view only moves along its alignment; out of it, it goes anywhere
+  if(Flag(a,"break_alignment"))view.RemoveAlignment();
   if(a.ContainsKey("center_mm")){var c=((System.Collections.IEnumerable)a["center_mm"]).Cast<object>().Select(Convert.ToDouble).ToArray();var o=(double[])view.GetOutline();var pos=(double[])view.Position;
    view.Position=new[]{pos[0]+c[0]/1000-(o[0]+o[2])/2,pos[1]+c[1]/1000-(o[1]+o[3])/2};d.EditRebuild3();}
   var info=ViewInfo(view);

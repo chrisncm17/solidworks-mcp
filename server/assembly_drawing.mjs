@@ -5,6 +5,7 @@
 import { basename, join } from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { answerSheet } from './answers.mjs';
+import { organizeDimensions } from './dims_layout.mjs';
 
 const PAPER = { A4: [297, 210], A3: [420, 297], A2: [594, 420], A1: [841, 594], A0: [1189, 841], letter: [279.4, 215.9], tabloid: [431.8, 279.4] };
 export const SCALES = [10, 5, 2, 1, 0.5, 0.4, 0.25, 0.2, 0.1, 0.05, 0.04, 0.025, 0.02, 0.01];
@@ -87,6 +88,11 @@ export async function assemblyDrawing(args, { worker, signal, root } = {}) {
       const an = await c('drawing_annotate', { document_id: drawingId, views: [views.front, views.top, views.side], dimensions: true, center_marks: true, hole_callouts: true, remove_repeated: true, auto_arrange: true });
       result.dimensions = { inserted: an.dimensions_gained ?? an.dimensions_inserted, per_view: an.views, hole_callouts: an.hole_callouts?.length ?? 0, repeated: an.repeated_dimensions };
       if (!(an.dimensions_gained ?? an.dimensions_inserted)) warnings.push('No se importaron cotas del modelo: si la pieza no viene de sw_part_build (croquis sin cotas), acótala con sw_drawing_annotate include_unmarked o a mano.');
+      // v3.15 auto arrange alone leaves too many dimensions in one view, texts over texts: one size once, in the three views and the section
+      const dc = await organizeDimensions(worker, { document_id: drawingId, section: args.section !== false }, { signal });
+      Object.assign(result.dimensions, { after_organizing: dc.dimensions_after, per_view: dc.per_view, removed: dc.dropped, ...(dc.section ? { section: dc.section } : {}), check: dc.check });
+      warnings.push(...(dc.warnings ?? []));
+      if (!dc.check.clean) warnings.push(`El plano tiene ${dc.check.errors} problemas de cotas: revisa el PDF.`);
     });
     if (result.kind === 'assembly' && args.bom !== false) await timed('bom', async () => {
       // top-right corner of the sheet, empty template columns (DESCRIPCION) removed, its real size measured

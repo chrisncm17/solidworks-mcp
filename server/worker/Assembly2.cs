@@ -20,11 +20,17 @@ partial class Worker {
 
  // Entity for a mate: {component, plane} (a reference plane of that component, e.g. "Alzado"), {assembly_plane},
  // or {point_mm:[x,y,z], kind:"face"|"edge"} = the face/edge of any component under that world point.
+ // front/top/right (accepted by the plan check) and the names of the other language: the tree of a Spanish SolidWorks says Alzado, Planta, Vista lateral
+ static string[] PlaneNames(string n){switch(n.Trim().ToLowerInvariant()){
+   case "front":case "front plane":case "alzado":return new[]{n,"Alzado","Front Plane","Front"};
+   case "top":case "top plane":case "planta":return new[]{n,"Planta","Top Plane","Top"};
+   case "right":case "right plane":case "vista lateral":return new[]{n,"Vista lateral","Right Plane","Right"};
+   default:return new[]{n};}}
  static void SelectMateEntity(IModelDoc2 d,Dictionary<string,object> e,int mark,string what){
   bool ok;
   if(e.ContainsKey("plane")){string comp=Str(e,"component");string id=Str(e,"plane")+"@"+comp+"@"+Path.GetFileNameWithoutExtension(d.GetTitle());
-   ok=d.Extension.SelectByID2(id,"PLANE",0,0,0,true,mark,null,0);if(!ok)throw new Exception(what+": plane "+id+" not found (component name and plane name as in the tree, e.g. Alzado/Planta/Vista lateral)");return;}
-  if(e.ContainsKey("assembly_plane")){ok=d.Extension.SelectByID2(Str(e,"assembly_plane"),"PLANE",0,0,0,true,mark,null,0);if(!ok)throw new Exception(what+": assembly plane "+Str(e,"assembly_plane")+" not found");return;}
+   ok=PlaneNames(Str(e,"plane")).Any(n=>d.Extension.SelectByID2(n+"@"+comp+"@"+Path.GetFileNameWithoutExtension(d.GetTitle()),"PLANE",0,0,0,true,mark,null,0));if(!ok)throw new Exception(what+": plane "+id+" not found (component name and plane name as in the tree, e.g. Alzado/Planta/Vista lateral)");return;}
+  if(e.ContainsKey("assembly_plane")){ok=PlaneNames(Str(e,"assembly_plane")).Any(n=>d.Extension.SelectByID2(n,"PLANE",0,0,0,true,mark,null,0));if(!ok)throw new Exception(what+": assembly plane "+Str(e,"assembly_plane")+" not found");return;}
   if(e.ContainsKey("local_point_mm")){
    // Face/edge of a component that passes through a point given in THAT PART's coordinates (independent of the view and of where the component is).
    var comp=((object[])((IAssemblyDoc)d).GetComponents(false)??new object[0]).Cast<IComponent2>().FirstOrDefault(x=>x.Name2==Str(e,"component"));
@@ -242,7 +248,7 @@ partial class Worker {
       foreach(var kv in tBefore){var cc=((object[])asm.GetComponents(false)??new object[0]).Cast<IComponent2>().FirstOrDefault(x=>x.Name2==kv.Key);if(cc!=null&&!cc.IsFixed()&&MaxDiff((double[])((MathTransform)cc.Transform2).ArrayData,kv.Value)>1e-9)cc.Transform2=(MathTransform)((IMathUtility)sw.GetMathUtility()).CreateTransform(kv.Value);}
       d.EditRebuild3();};
      if(Flag(a,"_expect_retry")){undo();throw new Exception("expect: "+ec+" origin "+string.Join(",",got.Select(v=>Math.Round(v,3)))+" mm, expected "+string.Join(",",eo)+" (± "+tol+")");}
-     undo();if(batchMates!=null)batchMates.Remove(f.Name);
+     string fName=f.Name;undo();if(batchMates!=null)batchMates.Remove(fName);
      var a2=new Dictionary<string,object>(a);a2["flip"]=!Flag(a,"flip");a2["_expect_retry"]=true;
      object r2;try{TryAssembly2("add_mate",a2,d,out r2);}catch(Exception rex){throw new Exception("expect: first side gave "+ec+" at "+string.Join(",",got.Select(v=>Math.Round(v,3)))+" mm; flipped: "+rex.Message);}
      result=new{flipped_for_expect=true,first_try_origin_mm=got.Select(v=>Math.Round(v,4)).ToArray(),mate_result=r2};return true;}

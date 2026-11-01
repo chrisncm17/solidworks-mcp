@@ -17,6 +17,7 @@ import { examReady, MCP_VERSION } from './exam_ready.mjs';
 import { answerSheet } from './answers.mjs';
 import { recordStep, summarize } from './exam_state.mjs';
 import { assemblyDrawing } from './assembly_drawing.mjs';
+import { superviseDimensions, dimensionWarning, organizeDimensions } from './dims_layout.mjs';
 import { recordCall, sessionRecipe } from './session_recorder.mjs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -117,7 +118,25 @@ async function handleCall(request, extra) {
       try { return { content: [{ type: 'text', text: JSON.stringify({ ok: true, result: await assemblyDiff(worker, args, { signal: extra.signal }) }) }] }; }
       catch (e) { return { isError: true, content: [{ type: 'text', text: e.message }] }; }
     }
+    if (tool.operation === 'drawing_dim_organize') {
+      try { const result = await organizeDimensions(worker, args, { signal: extra.signal }); return { content: [{ type: 'text', text: JSON.stringify({ ok: true, result }) }] }; }
+      catch (e) { return { isError: true, content: [{ type: 'text', text: e.message }] }; }
+    }
+    if (tool.operation === 'drawing_dim_check') {
+      try { const result = await superviseDimensions(worker, args, { signal: extra.signal }); return { content: [{ type: 'text', text: JSON.stringify({ ok: true, result }) }] }; }
+      catch (e) { return { isError: true, content: [{ type: 'text', text: e.message }] }; }
+    }
     const raw = await worker.call(tool.operation, args, { signal: extra.signal });
+    // v3.15 nobody delivers a sheet with crashed dimensions unseen: annotate leaves them fixed, a PDF export reports what is left
+    if (raw?.ok && raw.result && typeof raw.result === 'object') {
+      if (tool.operation === 'drawing_annotate' && args.dimensions !== false && args.check_layout !== false) {
+        try { raw.result.dimension_check = await superviseDimensions(worker, { document_id: args.document_id, fix: true }, { signal: extra.signal }); }
+        catch (e) { raw.result.dimension_check = { error: e.message }; }
+      }
+      if (tool.operation === 'export' && /\.pdf$/i.test(args.name ?? '')) {
+        try { const w = dimensionWarning(await superviseDimensions(worker, { document_id: args.document_id }, { signal: extra.signal })); if (w) raw.result.dimension_warning = w; } catch { }
+      }
+    }
     const { compactWorkerResponse } = await import('./compact.mjs');
     const response = compactWorkerResponse(raw, GENERATED, tool.operation);
     const content = [{ type: 'text', text: JSON.stringify(response) }];

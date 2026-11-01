@@ -44,7 +44,7 @@ partial class Worker {
   var sm=(ISelectionMgr)d.SelectionManager;
   var all=((object[])asm.GetComponents(false)??new object[0]).Cast<IComponent2>().ToList();
   var home=all.ToDictionary(c=>c.Name2,c=>(double[])((MathTransform)c.Transform2).ArrayData);
-  var homeBox=all.ToDictionary(c=>c.Name2,c=>(double[])c.GetBox(false,false));
+  var homeBox=all.ToDictionary(c=>c.Name2,c=>c.GetBox(false,false) as double[]); // a virtual or empty component has no box (DBNull)
   var trace=new List<string>();Action<string> trc=lbl=>trace.Add(lbl+": "+string.Join(" | ",all.Select(c=>{var t=(double[])((MathTransform)c.Transform2).ArrayData;return c.Name2+"("+Math.Round(t[9]*1000,2)+","+Math.Round(t[10]*1000,2)+","+Math.Round(t[11]*1000,2)+")";})));trc("home");
   Func<double[]> cmNow=()=>{var mp=(IMassProperty2)d.Extension.CreateMassProperty2();mp.UseSystemUnits=true;mp.Recalculate();return ((double[])mp.CenterOfMass).Select(x=>x*1000).ToArray();};var cm0=cmNow();
   Func<string,Exception> Undo=why=>{bool clean=false,back=false;
@@ -96,7 +96,7 @@ partial class Worker {
   // collapsed again → every component back home (translation in mm, rotation entries separately)
   double off=0;var offs=new List<string>();
   if(!keep)foreach(var c in all){var t=(double[])((MathTransform)c.Transform2).ArrayData;var h=home[c.Name2];double tr=Math.Sqrt(Enumerable.Range(9,3).Sum(i=>Math.Pow((t[i]-h[i])*1000,2)));double rot=Enumerable.Range(0,9).Max(i=>Math.Abs(t[i]-h[i]));
-   var bx=(double[])c.GetBox(false,false);var hb=homeBox[c.Name2];double boxOff=bx==null||hb==null?double.NaN:Enumerable.Range(0,6).Max(i=>Math.Abs(bx[i]-hb[i]))*1000;
+   var bx=c.GetBox(false,false) as double[];var hb=homeBox[c.Name2];double boxOff=bx==null||hb==null?double.NaN:Enumerable.Range(0,6).Max(i=>Math.Abs(bx[i]-hb[i]))*1000;
    if(tr>1e-6||rot>1e-9){offs.Add(c.Name2+" "+Math.Round(tr,4)+" mm");}off=Math.Max(off,tr+(rot>1e-9?1:0));}
   var cm1=cmNow();double cmOff=Math.Sqrt(Enumerable.Range(0,3).Sum(i=>Math.Pow(cm1[i]-cm0[i],2)));
   if(!keep&&off>0.001)throw Undo("The assembly did not collapse back ("+string.Join("; ",offs)+")");

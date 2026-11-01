@@ -1,6 +1,6 @@
 # Tools
 
-114 tools. Generated from `server/tools.mjs` by `npm run tools` - do not edit by hand.
+120 tools. Generated from `server/tools.mjs` by `npm run tools` - do not edit by hand.
 
 ## Session and documents
 
@@ -288,6 +288,19 @@ Delete one inspected sketch relation on a managed copy. Require its current inde
 | `expected_type` | integer (>= 1, <= 100) | yes |  |
 | `keep_broken` | boolean |  | Keep the result even if it breaks other features/mates (default: it is undone automatically and verified). sw_save then refuses to save until fixed. |
 
+### `sw_dome`
+
+v3.16 Dome (Cupula) on a planar face: face_point_mm a point ON the face, height_mm, reverse=true makes it concave, elliptical=true on a circular or elliptical face. Returns volume before/after. Unsaved until sw_save.
+
+| Option | Type / values | Required | Notes |
+|---|---|---|---|
+| `document_id` | string | yes |  |
+| `face_point_mm` | array of number (>= -100000, <= 100000) (3) | yes |  |
+| `height_mm` | number (> 0, <= 10000) | yes |  |
+| `reverse` | boolean |  |  |
+| `elliptical` | boolean |  |  |
+| `keep_broken` | boolean |  | Keep the result even if it breaks other features/mates (default: it is undone automatically and verified). sw_save then refuses to save until fixed. |
+
 ### `sw_draft`
 
 Keeps the SolidWorks default tree name (features are never renamed); the response returns it. Draft (ángulo de salida, neutral plane): faces in face_references are tilted angle_deg about their edge on the neutral face. Default tilts the faces OUTWARD from the neutral face (part grows away from it); flip=true tilts them inward (measured in batchA-test). Unsaved until sw_save.
@@ -300,6 +313,17 @@ Keeps the SolidWorks default tree name (features are never renamed); the respons
 | `angle_deg` | number (> 0, < 90) | yes |  |
 | `flip` | boolean |  |  |
 | `keep_broken` | boolean |  | Keep the result even if it breaks other features/mates (default: it is undone automatically and verified). sw_save then refuses to save until fixed. |
+
+### `sw_draft_analysis` (read-only)
+
+v3.16 Draft analysis (Analisis de angulo de salida), read only: every face of the part against the pull direction [x,y,z]: positive (comes out with one half), negative (with the other), requires_draft (below min_draft_deg, default 1) or straddle (crosses from one to the other: needs a split line). Returns counts, areas, whether it can be molded without changes and the faces, the problem ones first (max_faces, default 100).
+
+| Option | Type / values | Required | Notes |
+|---|---|---|---|
+| `document_id` | string | yes |  |
+| `direction` | array of number (>= -100000, <= 100000) (3) | yes |  |
+| `min_draft_deg` | number (>= 0, <= 45) |  |  |
+| `max_faces` | integer (>= 1, <= 2000) |  |  |
 
 ### `sw_equations` (read-only)
 
@@ -346,14 +370,15 @@ Change an EXISTING extrusion (boss or cut) without redrawing it: end_condition o
 
 ### `sw_fillet`
 
-Keeps the SolidWorks default tree name (features are never renamed); the response returns it. Create a constant-radius fillet on edges given by edge_points_mm (a point on each edge, fastest) or by inspected edge_references. radius_mm is mm. Tangent propagation defaults false. Refresh topology after edits.
+Keeps the SolidWorks default tree name (features are never renamed); the response returns it. Create a constant-radius fillet on edges given by edge_points_mm (a point on each edge, fastest) or by inspected edge_references. radius_mm is mm. v3.16 end_radii_mm [a, b] instead makes a variable-radius fillet on ONE edge, a at the start of the edge and b at its end (SolidWorks decides which end is the start: read the result and swap them if needed). Tangent propagation defaults false. Refresh topology after edits.
 
 | Option | Type / values | Required | Notes |
 |---|---|---|---|
 | `document_id` | string | yes |  |
+| `end_radii_mm` | array of number (> 0, <= 1000) (2) |  |  |
 | `edge_references` | array of string |  |  |
 | `edge_points_mm` | array of array of number (3) |  | v3.8 faster: one point ON each edge, world mm (no sw_topology needed); nearest edge within 0.5 mm, a tie is refused |
-| `radius_mm` | number (> 0, <= 1000) | yes |  |
+| `radius_mm` | number (> 0, <= 1000) |  |  |
 | `tangent_propagation` | boolean |  |  |
 | `keep_broken` | boolean |  | Keep the result even if it breaks other features/mates (default: it is undone automatically and verified). sw_save then refuses to save until fixed. |
 
@@ -404,12 +429,16 @@ Keeps the SolidWorks default tree name (features are never renamed); the respons
 
 ### `sw_loft`
 
-Keeps the SolidWorks default tree name (features are never renamed); the response returns it. Loft (recubrir) through 2-10 closed profile sketches, in order (each on a different plane, e.g. sketches on sw_ref_plane planes). cut=true removes material (loft cut). merge defaults true. Unsaved until sw_save.
+Keeps the SolidWorks default tree name (features are never renamed); the response returns it. Loft (recubrir) through 2-10 closed profile sketches, in order (each on a different plane, e.g. sketches on sw_ref_plane planes). cut=true removes material (loft cut). merge defaults true. v3.16 guides = open sketches or curves that touch every profile; start_constraint / end_constraint normal leaves or reaches the end profile perpendicular to it (none by default); closed=true joins the last profile to the first (3 or more). Unsaved until sw_save.
 
 | Option | Type / values | Required | Notes |
 |---|---|---|---|
 | `document_id` | string | yes |  |
 | `profiles` | array of string | yes |  |
+| `guides` | array of string |  |  |
+| `start_constraint` | `none` \\| `normal` |  |  |
+| `end_constraint` | `none` \\| `normal` |  |  |
+| `closed` | boolean |  |  |
 | `cut` | boolean |  |  |
 | `merge` | boolean |  |  |
 | `keep_broken` | boolean |  | Keep the result even if it breaks other features/mates (default: it is undone automatically and verified). sw_save then refuses to save until fixed. |
@@ -622,13 +651,14 @@ Chapa metálica on a managed part. action base_flange: closed profile sketch (or
 
 ### `sw_shell`
 
-Keeps the SolidWorks default tree name (features are never renamed); the response returns it. Shell (vaciado): hollow the part to thickness_mm, removing the faces in face_references (from sw_topology; none = closed hollow). outward=true adds the wall outside. Unsaved until sw_save.
+Keeps the SolidWorks default tree name (features are never renamed); the response returns it. Shell (vaciado): hollow the part to thickness_mm, removing the faces in face_references (from sw_topology; none = closed hollow). outward=true adds the wall outside. v3.16 face_thickness = walls with their own thickness [{face_reference, thickness_mm}]. Unsaved until sw_save.
 
 | Option | Type / values | Required | Notes |
 |---|---|---|---|
 | `document_id` | string | yes |  |
 | `thickness_mm` | number (> 0, <= 1000) | yes |  |
 | `face_references` | array of string |  |  |
+| `face_thickness` | array of object |  |  |
 | `outward` | boolean |  |  |
 | `keep_broken` | boolean |  | Keep the result even if it breaks other features/mates (default: it is undone automatically and verified). sw_save then refuses to save until fixed. |
 
@@ -640,6 +670,18 @@ Read sketch segments, their current indexes, coordinates in meters and relation 
 |---|---|---|---|
 | `document_id` | string | yes |  |
 | `name` | string | yes |  |
+
+### `sw_sketch_3d`
+
+v3.16 3D sketch (Croquis 3D): a path that is not in one plane, for sw_sweep or as a guide. points_mm in part coordinates; type polyline (straight segments, default) with optional fillet_mm at every corner, or spline through the points. Returns the sketch name. Unsaved until sw_save.
+
+| Option | Type / values | Required | Notes |
+|---|---|---|---|
+| `document_id` | string | yes |  |
+| `points_mm` | array of array of number (>= -100000, <= 100000) (3) | yes |  |
+| `type` | `polyline` \\| `spline` |  |  |
+| `fillet_mm` | number (> 0, <= 10000) |  |  |
+| `keep_broken` | boolean |  | Keep the result even if it breaks other features/mates (default: it is undone automatically and verified). sw_save then refuses to save until fixed. |
 
 ### `sw_sketch_plane`
 
@@ -655,6 +697,19 @@ Move an existing sketch onto another planar support (Editar plano de croquis) wi
 | `face_reference` | string |  |  |
 | `keep_broken` | boolean |  | Keep the result even if it breaks other features/mates (default: it is undone automatically and verified). sw_save then refuses to save until fixed. |
 
+### `sw_split_line`
+
+v3.16 Split line (Linea de particion) by projection: the sketch is projected onto the faces given by face_points_mm (a point ON each face), dividing them so part of a face can have its own fillet, draft or appearance. The body keeps its volume. reverse flips the projection, single_direction projects one way only. Checks that a face really was divided. Unsaved until sw_save.
+
+| Option | Type / values | Required | Notes |
+|---|---|---|---|
+| `document_id` | string | yes |  |
+| `sketch` | string | yes | Optional for new features: omit it to keep the SolidWorks default tree name (features are never renamed). Required when referring to an existing feature or sketch. |
+| `face_points_mm` | array of array of number (>= -100000, <= 100000) (3) | yes |  |
+| `reverse` | boolean |  |  |
+| `single_direction` | boolean |  |  |
+| `keep_broken` | boolean |  | Keep the result even if it breaks other features/mates (default: it is undone automatically and verified). sw_save then refuses to save until fixed. |
+
 ### `sw_suppress_feature`
 
 Suppress or unsuppress a named feature in the active configuration of a managed part and rebuild. Dependent features may also change. Create a checkpoint first when recovery is needed.
@@ -668,13 +723,16 @@ Suppress or unsuppress a named feature in the active configuration of a managed 
 
 ### `sw_sweep`
 
-Keeps the SolidWorks default tree name (features are never renamed); the response returns it. Sweep (barrido) a closed profile sketch along a path (open sketch or helix feature) that starts on the profile plane. circular_diameter_mm sweeps a round section without a profile sketch (boss only). cut=true removes material. Unsaved until sw_save.
+Keeps the SolidWorks default tree name (features are never renamed); the response returns it. Sweep (barrido) a closed profile sketch along a path (open sketch or helix feature) that starts on the profile plane. circular_diameter_mm sweeps a round section without a profile sketch (boss only). v3.16 guides = open sketches or curves that touch the profile and shape it along the path (each pierced by a sketch point of the profile); orientation follow_path (default), keep_normal (the section keeps its direction), follow_path_first_guide, follow_first_second_guide, twist_along_path or normal_twist_along_path with twist_deg (turns along the whole path). cut=true removes material. Unsaved until sw_save.
 
 | Option | Type / values | Required | Notes |
 |---|---|---|---|
 | `document_id` | string | yes |  |
 | `profile` | string |  | Optional for new features: omit it to keep the SolidWorks default tree name (features are never renamed). Required when referring to an existing feature or sketch. |
 | `path` | string | yes | Optional for new features: omit it to keep the SolidWorks default tree name (features are never renamed). Required when referring to an existing feature or sketch. |
+| `guides` | array of string |  |  |
+| `orientation` | `follow_path` \\| `keep_normal` \\| `follow_path_first_guide` \\| `follow_first_second_guide` \\| `twist_along_path` \\| `normal_twist_along_path` |  |  |
+| `twist_deg` | number (>= -36000, <= 36000) |  |  |
 | `circular_diameter_mm` | number (> 0, <= 1000) |  |  |
 | `cut` | boolean |  |  |
 | `merge` | boolean |  |  |
@@ -1156,11 +1214,12 @@ Create a native drawing with three standard orthographic views of a SAVED manage
 
 ### `sw_drawing_annotate`
 
-Add the MODEL dimensions to drawing views (Insert Model Items: dimensions marked for drawing; include_unmarked adds the rest) and optional automatic center marks on holes (center_marks, slot_center_marks) and hole callouts (hole_callouts: one per Hole Wizard feature per view where the hole is seen end-on; include_cut_holes adds plain cut holes). views limits it to named views of the active sheet (default all). By default keeps each model dimension in only its first view (remove_repeated) and applies SolidWorks auto-arrange spacing (auto_arrange). Reports dimensions gained per view and any dimension still repeated. Imported dimensions can overlap: export the PDF and review. Unsaved until sw_save.
+Add the MODEL dimensions to drawing views (Insert Model Items: dimensions marked for drawing; include_unmarked adds the rest) and optional automatic center marks on holes (center_marks, slot_center_marks) and hole callouts (hole_callouts: one per Hole Wizard feature per view where the hole is seen end-on; include_cut_holes adds plain cut holes). views limits it to named views of the active sheet (default all). By default keeps each model dimension in only its first view (remove_repeated) and applies SolidWorks auto-arrange spacing (auto_arrange). Reports dimensions gained per view and any dimension still repeated. After importing, the sheet is supervised and fixed as in sw_drawing_dim_check (dimension_check in the result; check_layout false skips it). Unsaved until sw_save.
 
 | Option | Type / values | Required | Notes |
 |---|---|---|---|
 | `document_id` | string | yes |  |
+| `check_layout` | boolean |  |  |
 | `dimensions` | boolean |  |  |
 | `include_unmarked` | boolean |  |  |
 | `center_marks` | boolean |  |  |
@@ -1172,19 +1231,54 @@ Add the MODEL dimensions to drawing views (Insert Model Items: dimensions marked
 | `views` | array of string |  |  |
 | `keep_broken` | boolean |  | Keep the result even if it breaks other features/mates (default: it is undone automatically and verified). sw_save then refuses to save until fixed. |
 
-### `sw_drawing_dimension`
+### `sw_drawing_dim_check`
 
-v3.10 Manual dimensions on a managed DRAWING view (Cota inteligente). action probe: the visible edges of sheet+view, each with an index, kind (line, circle, arc, curve), length or diameter, ends/centre in MODEL mm and on the SHEET mm (kind filters, max_edges limits). action add: edges = one index (length of a line, diameter/radius of a circle) or two (distance between lines, angle); type smart (default, SolidWorks picks), horizontal, vertical, diameter, radius, angle; position_mm = text position on the sheet (default 12 mm outside the edge). Returns the measured value (mm or deg). v3.11 action auto: for geometry without model dimensions (imported STEP/DXF), overall width and height from the outermost straight edges plus one diameter per distinct circle size (with its count). Indexes are valid until the view or model changes. Unsaved until sw_save.
+v3.15 Supervise the dimensions of a managed DRAWING from their REAL geometry: texts over texts (text_overlap), a line of another dimension across a text (text_on_line), texts over a view, off the sheet, over the title block or a note, the same distance twice in a view (duplicate). line_across_view and repeated (same value, other geometry) are only reported. fix true: deletes the duplicates (delete_duplicates false keeps them), sets linear dimensions on tracks around their view (shortest nearest) and radial ones around their centre, moves a view without dimensions to the top-right corner if there is no room (arrange_views false keeps it), reads back and keeps only what really improved. Never saves; check with sw_preview, then sw_save. title_block_mm [x0,y0,x1,y1] overrides the zone deduced from the format.
 
 | Option | Type / values | Required | Notes |
 |---|---|---|---|
 | `document_id` | string | yes |  |
-| `action` | `probe` \\| `add` \\| `auto` | yes |  |
+| `fix` | boolean |  |  |
+| `sheet` | string |  |  |
+| `delete_duplicates` | boolean |  |  |
+| `arrange_views` | boolean |  |  |
+| `margin_mm` | number (>= 0, <= 50) |  |  |
+| `max_passes` | integer (>= 1, <= 8) |  |  |
+| `title_block_mm` | array of number (4) |  |  |
+| `keep_broken` | boolean |  | Keep the result even if it breaks other features/mates (default: it is undone automatically and verified). sw_save then refuses to save until fixed. |
+
+### `sw_drawing_dim_organize`
+
+v3.17 Leave on a part sheet the dimensions needed to make the part and no more, each one once, shared among the views. What it needs comes from the faces of the part, not from what the sheet happens to have: along each model axis the planes and the centres of what is round are points, and N points take N-1 dimensions, the total first; each size of round once with how many (4 X R5, 2 X diameter, R1 TYP); nothing for what comes by itself (the centre of a fillet, a round centred on a symmetric part, the sides of a tapered slot, said by the centres and radii of its ends, the twin on the other side of the middle, equal gaps between equal things, holes around a circle: their separation and the distance to the contour, or with no contour their separation and count unless a place is empty; a slanted face: its angle and the sharp corner it was drawn with; a chamfer: its length X 45°). Dimensions of the model go first; what no dimension says is made from the edges of the views and what SolidWorks measures decides; hand-made dimensions hanging from a sketch or the line of a section, not from the part, go away. sufficiency in the result: sufficient true (with these the part can be made), false (what is missing, by name) or null (faces that cannot be followed: check them by eye). Adds the front, top or side view if missing; adds a section view (hatching on solid, blank on hollow) through the largest hole or cut if the part has something hollow (section false skips it), along its line or out of it where there is room. reference_values [mm]: the sizes of a reference drawing (sw_drawing_read), then ONLY those are shown and the ones the model lacks are reported. A sheet with several parts only loses what repeats. Then arranges the sheet as sw_drawing_dim_check fix true does. Never saves; check with sw_preview, then sw_save.
+
+| Option | Type / values | Required | Notes |
+|---|---|---|---|
+| `document_id` | string | yes |  |
+| `sheet` | string |  |  |
+| `section` | boolean |  |  |
+| `reference_values` | array of number |  |  |
+| `margin_mm` | number (>= 0, <= 50) |  |  |
+| `title_block_mm` | array of number (4) |  |  |
+| `keep_broken` | boolean |  | Keep the result even if it breaks other features/mates (default: it is undone automatically and verified). sw_save then refuses to save until fixed. |
+
+### `sw_drawing_dimension`
+
+v3.10 Manual dimensions on a managed DRAWING view (Cota inteligente). action probe: the visible edges of sheet+view, each with an index, kind (line, circle, arc, curve), length or diameter, ends/centre in MODEL mm and on the SHEET mm (kind filters, max_edges limits). action add: edges = one index (length of a line, diameter/radius of a circle) or two (distance between lines, angle); type smart (default, SolidWorks picks), horizontal, vertical, diameter, radius, angle; position_mm = text position on the sheet (default 12 mm outside the edge); arc_end = from the rim of a circle instead of its centre. Returns the measured value (mm or deg). v3.11 action auto: for geometry without model dimensions (imported STEP/DXF), overall width and height from the outermost straight edges plus one diameter per distinct circle size (with its count). v3.17 action guided: what no edge can carry goes on a construction line of the view. guides = lines, each from the start or end (at) of a straight edge, turned turn_deg counter-clockwise on the sheet from the direction towards the other end of that edge, length_mm long; feet = one or two of { edge } or { guide }, with end start or end for that point instead of the whole line; type horizontal, vertical or angle; expect = the value the sheet must read (mm or deg) within tolerance, or line and dimension are removed: no value is ever written by hand. Indexes are valid until the view or model changes. Unsaved until sw_save.
+
+| Option | Type / values | Required | Notes |
+|---|---|---|---|
+| `document_id` | string | yes |  |
+| `action` | `probe` \\| `add` \\| `auto` \\| `guided` | yes |  |
+| `guides` | array of object |  | guided: the construction lines |
+| `feet` | array of object |  | guided: what the dimension measures, an edge or one of the guides |
+| `expect` | number (>= 0, <= 100000) |  | guided: the value the sheet must read |
+| `tolerance` | number (> 0, <= 1) |  | guided: default 0.01 |
 | `max_circles` | integer (>= 1, <= 100) |  | auto: at most this many distinct circle sizes (default 12) |
 | `sheet` | string | yes |  |
 | `view` | string | yes |  |
 | `kind` | `line` \\| `circle` \\| `arc` \\| `curve` |  |  |
 | `max_edges` | integer (>= 1, <= 1000) |  |  |
+| `arc_end` | array of `center` \\| `min` \\| `max` |  | add: per edge, measure a circle from its centre (default), near side (min) or far side (max): contour to hole |
 | `edges` | array of integer (>= 0, <= 100000) |  |  |
 | `type` | `smart` \\| `horizontal` \\| `vertical` \\| `diameter` \\| `radius` \\| `angle` |  |  |
 | `position_mm` | array of number (>= -5000, <= 5000) (2) |  |  |
@@ -1290,7 +1384,7 @@ Sheets of a managed DRAWING. action list. action add (new sheet) / setup (existi
 
 ### `sw_drawing_views`
 
-DRAWING sheets and views. action=list: every sheet (size mm, sheet scale) with its views (model, orientation, scale, display mode, exploded, outline mm, dimension/balloon/note counts). action=set: on one sheet+view change scale (decimal, e.g. 0.25 = 1:4), display (shaded = mode 3 with edges, hidden_lines_removed, hidden_greyed, wireframe) and/or center_mm [x,y] on the sheet; attached dimensions and notes move and scale with the view. action=fix_sheet_scale: set every sheet scale to 1:1 keeping each view scale (inserting views changes the sheet scale and shrinks frames/title blocks). action=section (v3.9): section view of sheet+view cut by a straight line, direction horizontal or vertical on the sheet, through_mm = a point in MODEL coordinates the cut passes through (e.g. a hole centre; default the middle of the view), label (default next free letter), position_mm of the new view on the sheet (default beside the parent), flip reverses the viewing direction. action=detail (v3.10): detail view (vista de detalle) of sheet+view: a circle of radius_mm (MODEL mm) around through_mm (MODEL point; default the middle of the view), magnified to scale (default twice the parent scale, e.g. 2 = 2:1), label (default next free letter), position_mm or the nearest free spot of the sheet. Unsaved until sw_save.
+DRAWING sheets and views. action=list: every sheet (size mm, sheet scale) with its views (model, orientation, scale, display mode, exploded, outline mm, dimension/balloon/note counts). action=set: on one sheet+view change scale (decimal, e.g. 0.25 = 1:4), display (shaded = mode 3 with edges, hidden_lines_removed, hidden_greyed, wireframe) and/or center_mm [x,y] on the sheet; attached dimensions and notes move and scale with the view. break_alignment true (v3.17) takes the view out of the line with its parent first, so center_mm can put it anywhere. action=fix_sheet_scale: set every sheet scale to 1:1 keeping each view scale (inserting views changes the sheet scale and shrinks frames/title blocks). action=section (v3.9): section view of sheet+view cut by a straight line, direction horizontal or vertical on the sheet, through_mm = a point in MODEL coordinates the cut passes through (e.g. a hole centre; default the middle of the view), label (default next free letter), position_mm of the new view on the sheet (default beside the parent), flip reverses the viewing direction. action=detail (v3.10): detail view (vista de detalle) of sheet+view: a circle of radius_mm (MODEL mm) around through_mm (MODEL point; default the middle of the view), magnified to scale (default twice the parent scale, e.g. 2 = 2:1), label (default next free letter), position_mm or the nearest free spot of the sheet. Unsaved until sw_save.
 
 | Option | Type / values | Required | Notes |
 |---|---|---|---|
@@ -1307,6 +1401,7 @@ DRAWING sheets and views. action=list: every sheet (size mm, sheet scale) with i
 | `scale` | number (> 0, <= 100) |  |  |
 | `display` | `shaded` \\| `hidden_lines_removed` \\| `hidden_greyed` \\| `wireframe` |  |  |
 | `center_mm` | array of number (>= -5000, <= 5000) (2) |  |  |
+| `break_alignment` | boolean |  |  |
 | `keep_broken` | boolean |  | Keep the result even if it breaks other features/mates (default: it is undone automatically and verified). sw_save then refuses to save until fixed. |
 
 ### `sw_measure_sheet`

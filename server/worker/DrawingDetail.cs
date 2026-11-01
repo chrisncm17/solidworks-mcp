@@ -72,7 +72,7 @@ partial class Worker {
    note="Detail view; unsaved until sw_save. Check it with sw_preview or the PDF export."};
  }
 
- class ViewEdge{public IEdge Edge;public IComponent2 Comp;public string Kind;public double[] A,B,C;public double Radius,Length;public bool Full;}
+ class ViewEdge{public IEdge Edge;public IComponent2 Comp;public string Kind;public double[] A,B,C,N;public double Radius,Length;public bool Full;}
  static List<ViewEdge> VisibleEdges(IView view){
   var list=new List<ViewEdge>();
   var comps=(view.GetVisibleComponents() as object[])??new object[0];
@@ -82,12 +82,13 @@ partial class Worker {
    var ents=(view.GetVisibleEntities2((Component2)comp,(int)swViewEntityType_e.swViewEntityType_Edge) as object[])??new object[0];
    MathTransform xf=comp==null?null:comp.Transform2;
    Func<double[],double[]> toModel=p=>p==null||xf==null?p:(double[])((MathPoint)((MathPoint)mu.CreatePoint(p)).MultiplyTransform(xf)).ArrayData;
+   Func<double[],double[]> dirToModel=v=>xf==null?v:(double[])((MathVector)((MathVector)mu.CreateVector(v)).MultiplyTransform(xf)).ArrayData;
    foreach(var o in ents){var e=o as IEdge;if(e==null)continue;var cu=(ICurve)e.GetCurve();var ve=new ViewEdge{Edge=e,Comp=comp};
     var sv=e.GetStartVertex() as IVertex;var ev=e.GetEndVertex() as IVertex;
     ve.A=sv==null?null:toModel((double[])sv.GetPoint());ve.B=ev==null?null:toModel((double[])ev.GetPoint());
     double t0,t1;bool closed,periodic;cu.GetEndParams(out t0,out t1,out closed,out periodic);ve.Length=cu.GetLength3(t0,t1);
     if(cu.IsLine())ve.Kind="line";
-    else if(cu.IsCircle()){var p=(double[])cu.CircleParams;ve.C=toModel(new[]{p[0],p[1],p[2]});ve.Radius=p[6];ve.Full=sv==null||ev==null||Dist(ve.A,ve.B)<1e-9;ve.Kind=ve.Full?"circle":"arc";}
+    else if(cu.IsCircle()){var p=(double[])cu.CircleParams;ve.C=toModel(new[]{p[0],p[1],p[2]});ve.N=dirToModel(new[]{p[3],p[4],p[5]});ve.Radius=p[6];ve.Full=sv==null||ev==null||Dist(ve.A,ve.B)<1e-9;ve.Kind=ve.Full?"circle":"arc";}
     else ve.Kind="curve";
     list.Add(ve);}
   }
@@ -105,7 +106,7 @@ partial class Worker {
    string only=a.ContainsKey("kind")?Str(a,"kind"):null;int max=a.ContainsKey("max_edges")?Convert.ToInt32(a["max_edges"]):200;
    var rows=edges.Select((e,i)=>new{e,i}).Where(x=>only==null||x.e.Kind==only).Take(max).Select(x=>new{index=x.i,kind=x.e.Kind,component=x.e.Comp==null?null:x.e.Comp.Name2,
     length_mm=Math.Round(x.e.Length*1000,3),diameter_mm=x.e.Kind=="circle"||x.e.Kind=="arc"?(double?)Math.Round(x.e.Radius*2000,3):null,
-    start_model_mm=mm(x.e.A),end_model_mm=mm(x.e.B),center_model_mm=mm(x.e.C),start_sheet_mm=sh(x.e.A),end_sheet_mm=sh(x.e.B),center_sheet_mm=sh(x.e.C)}).ToArray();
+    start_model_mm=mm(x.e.A),end_model_mm=mm(x.e.B),center_model_mm=mm(x.e.C),normal_model=x.e.N==null?null:x.e.N.Select(q=>Math.Round(q,4)).ToArray(),start_sheet_mm=sh(x.e.A),end_sheet_mm=sh(x.e.B),center_sheet_mm=sh(x.e.C)}).ToArray();
    result=new{sheet=Str(a,"sheet"),view=view.Name,scale=view.ScaleDecimal,edges_total=edges.Count,edges=rows,
     note="Indexes are valid until the view or the model changes; call probe again after edits. Use them with action add."};return true;
   }
@@ -128,13 +129,14 @@ partial class Worker {
    d.EditRebuild3();
    result=new{sheet=Str(a,"sheet"),view=view.Name,dimensions=made.ToArray(),skipped=skipped.ToArray(),note="Driven dimensions; unsaved until sw_save. Check the layout with sw_preview."};return true;
   }
+  if(action=="guided"){result=AddGuidedDim(d,dr,view,edges,a);return true;}
   // action add
   var idx=Items(a["edges"]).Select(Convert.ToInt32).ToArray();
   string type=a.ContainsKey("type")?Str(a,"type"):"smart";
-  var res=AddViewDim(d,dr,view,edges,idx,type,a.ContainsKey("position_mm")?Items(a["position_mm"]).Select(v=>Convert.ToDouble(v)/1000).ToArray():null);
+  var res=AddViewDim(d,dr,view,edges,idx,type,a.ContainsKey("position_mm")?Items(a["position_mm"]).Select(v=>Convert.ToDouble(v)/1000).ToArray():null,a.ContainsKey("arc_end")?Items(a["arc_end"]).Select(Convert.ToString).ToArray():null,a.ContainsKey("ends")?Items(a["ends"]).Select(Convert.ToString).ToArray():null);
   result=res;return true;
  }
- static object AddViewDim(IModelDoc2 d,IDrawingDoc dr,IView view,List<ViewEdge> edges,int[] idx,string type,double[] given){
+ static object AddViewDim(IModelDoc2 d,IDrawingDoc dr,IView view,List<ViewEdge> edges,int[] idx,string type,double[] given,string[] arcEnd=null,string[] ends=null){
   if(idx.Length<1||idx.Length>2)throw new Exception("edges: one or two indexes from action probe");
   foreach(int i in idx)if(i<0||i>=edges.Count)throw new Exception("Edge index "+i+" out of range 0.."+(edges.Count-1)+"; call action probe again");
   var e0=edges[idx[0]];
@@ -150,10 +152,15 @@ partial class Worker {
    if(type=="horizontal"){dx=0;dy=dy>=0?1:-1;n=1;}if(type=="vertical"){dy=0;dx=dx>=0?1:-1;n=1;}
    // a circle or arc: from its centre past the rim, so the text does not sit on the circle
    double off=0.012+(idx.Length==1&&e0.Kind!="line"&&e0.Kind!="curve"?e0.Radius*view.ScaleDecimal:0);
-   pos=new[]{m0[0]+dx/n*off,m0[1]+dy/n*off};}
+   pos=new[]{m0[0]+dx/n*off,m0[1]+dy/n*off};
+   // along an axis: out of the view, or its line can land on the very edges and leave no extension lines to read it by
+   if(type=="horizontal")pos[1]=dy>0?o[3]+0.01:o[1]-0.01;
+   if(type=="vertical")pos[0]=dx>0?o[2]+0.01:o[0]-0.01;}
   if(!dr.ActivateView(view.Name))throw new Exception("Cannot activate view "+view.Name);
   d.ClearSelection2(true);
-  for(int k=0;k<idx.Length;k++)if(!view.SelectEntity(edges[idx[k]].Edge,k>0))throw new Exception("Cannot select edge "+idx[k]+" in "+view.Name);
+  // v3.17 ends: the corner of the edge instead of the edge, where a slanted edge stops
+  for(int k=0;k<idx.Length;k++){var en=ends!=null&&k<ends.Length?ends[k]:null;object pick=en=="start"?edges[idx[k]].Edge.GetStartVertex():en=="end"?edges[idx[k]].Edge.GetEndVertex():(object)edges[idx[k]].Edge;
+   if(pick==null||!view.SelectEntity(pick,k>0))throw new Exception("Cannot select edge "+idx[k]+(string.IsNullOrEmpty(en)?"":" ("+en+" corner)")+" in "+view.Name);}
   object ddo=null;
   // the "Modify" value dialog (swInputDimValOnCreate) blocks the worker until someone clicks it
   bool prompt=sw.GetUserPreferenceToggle((int)swUserPreferenceToggle_e.swInputDimValOnCreate);
@@ -170,8 +177,61 @@ partial class Worker {
   // edge-on circles (seen as lines) picked for a horizontal/vertical dimension give a 90 deg angular instead (shown as 1570.796)
   if(ang&&type!="angle"&&type!="smart"){var an=(IAnnotation)dd.GetAnnotation();if(an.Select3(false,null))d.Extension.DeleteSelection2(0);d.ClearSelection2(true);
    throw new Exception("SolidWorks made an angular dimension ("+Math.Round(sv*180/Math.PI,2)+" deg) instead of a "+type+" one, usually from circles seen edge-on; it was deleted. Pick straight line edges (probe kind=line) or the circle in another view.");}
-  d.EditRebuild3();
+  // v3.15 from a circle's rim instead of its centre (contour to hole): the near or the far side, one entry per edge
+  if(arcEnd!=null)for(int k=0;k<arcEnd.Length&&k<idx.Length;k++){if(arcEnd[k]=="center")continue;
+   if(dim.SetArcEndCondition(k+1,(int)(arcEnd[k]=="min"?swArcEndCondition_e.swArcEndConditionMin:swArcEndCondition_e.swArcEndConditionMax))!=0)throw new Exception("SolidWorks did not take arc_end "+arcEnd[k]+" on edge "+idx[k]);}
+  d.EditRebuild3();sv=dim.SystemValue;
   return new{view=view.Name,type=type,edges=idx,value=ang?Math.Round(sv*180/Math.PI,4):Math.Round(sv*1000,4),unit=ang?"deg":"mm",name=dim.FullName,
    text_on_sheet_mm=new[]{Math.Round(pos[0]*1000,1),Math.Round(pos[1]*1000,1)},note="Driven (reference) dimension of the drawing; unsaved until sw_save. Check placement with sw_preview."};
+ }
+ // v3.17 what no edge can carry (the corner a round took away, an angle measured from a line of the sketch) goes on a construction line of the view that starts at the end of a real edge:
+ // from there along the edge towards its other end, turned by turn_deg counter-clockwise on the sheet. The sheet reads the value it should or the line and the dimension go: no value is ever written by hand
+ static object AddGuidedDim(IModelDoc2 d,IDrawingDoc dr,IView view,List<ViewEdge> edges,Dictionary<string,object> a){
+  string type=Str(a,"type");double expect=Convert.ToDouble(a["expect"]),tol=a.ContainsKey("tolerance")?Convert.ToDouble(a["tolerance"]):0.01;
+  var guides=Items(a["guides"]).Cast<Dictionary<string,object>>().ToArray();var feet=Items(a["feet"]).Cast<Dictionary<string,object>>().ToArray();
+  if(guides.Length<1||feet.Length<1||feet.Length>2)throw new Exception("guided: at least one guide and one or two feet");
+  Func<Dictionary<string,object>,string,int,int> index=(f,k,n)=>{int i=Convert.ToInt32(f[k]);if(i<0||i>=n)throw new Exception(k+" index "+i+" out of range 0.."+(n-1));return i;};
+  if(!dr.ActivateView(view.Name))throw new Exception("Cannot activate view "+view.Name);
+  var mu=(IMathUtility)sw.GetMathUtility();var sk=view.GetSketch() as ISketch;MathTransform toSk=null;try{toSk=sk==null?null:sk.ModelToSketchTransform;}catch{}
+  Func<double[],double[]> map=q=>toSk==null?q:(double[])((MathPoint)((MathPoint)mu.CreatePoint(q)).MultiplyTransform(toSk)).ArrayData;
+  var segs=new List<ISketchSegment>();double[] firstEnd=null;
+  Action wipe=()=>{foreach(var s in segs)try{if(s.Select4(false,null))d.Extension.DeleteSelection2(0);}catch{}d.ClearSelection2(true);};
+  bool addRel=d.SketchManager.AddToDB;d.SketchManager.AddToDB=true;
+  try{
+   foreach(var g in guides){
+    var e=edges[index(g,"edge",edges.Count)];if(e.Kind!="line"||e.A==null||e.B==null)throw new Exception("A guide starts at the end of a straight edge");
+    bool atStart=Str(g,"at")=="start";var p=ModelToSheet(view,atStart?e.A:e.B);var q=ModelToSheet(view,atStart?e.B:e.A);
+    double dir=Math.Atan2(q[1]-p[1],q[0]-p[0])+Convert.ToDouble(g["turn_deg"])*Math.PI/180,len=Convert.ToDouble(g["length_mm"])/1000;
+    var end=new[]{p[0]+len*Math.Cos(dir),p[1]+len*Math.Sin(dir),0};firstEnd=firstEnd??end;
+    var q1=map(new[]{p[0],p[1],0});var q2=map(end);
+    var seg=d.SketchManager.CreateLine(q1[0],q1[1],0,q2[0],q2[1],0) as ISketchSegment;if(seg==null)throw new Exception("Cannot draw the line in "+view.Name);
+    // the colour of construction lines is too pale to read on paper
+    seg.ConstructionGeometry=true;seg.Color=0;segs.Add(seg);}
+   // along an axis: out of the view, as an edge dimension. An angle says where: the side of its vertex picks the sector
+   var o=(double[])view.GetOutline();var pos=a.ContainsKey("position_mm")?Items(a["position_mm"]).Select(v=>Convert.ToDouble(v)/1000).ToArray():type=="vertical"?new[]{firstEnd[0]>(o[0]+o[2])/2?o[2]+0.01:o[0]-0.01,firstEnd[1]}:new[]{firstEnd[0],firstEnd[1]>(o[1]+o[3])/2?o[3]+0.01:o[1]-0.01};
+   bool ang=type=="angle";double value=0;
+   // on one side of the vertex an angle can read 30 or 330: that depends on which foot is selected first, so what reads the other one goes again the other way round
+   foreach(var order in ang&&feet.Length==2?new[]{feet,new[]{feet[1],feet[0]}}:new[]{feet}){
+    d.ClearSelection2(true);
+    for(int k=0;k<order.Length;k++){var f=order[k];string en=f.ContainsKey("end")?Str(f,"end"):null;bool ok;
+     if(f.ContainsKey("guide")){var seg=segs[index(f,"guide",segs.Count)];var line=seg as ISketchLine;
+      if(en=="start")ok=((ISketchPoint)line.GetStartPoint2()).Select4(k>0,null);else if(en=="end")ok=((ISketchPoint)line.GetEndPoint2()).Select4(k>0,null);else ok=seg.Select4(k>0,null);}
+     else{var e=edges[index(f,"edge",edges.Count)];object pick=en=="start"?e.Edge.GetStartVertex():en=="end"?e.Edge.GetEndVertex():(object)e.Edge;ok=pick!=null&&view.SelectEntity(pick,k>0);}
+     if(!ok)throw new Exception("Cannot select foot "+k+" in "+view.Name);}
+    object ddo=null;bool prompt=sw.GetUserPreferenceToggle((int)swUserPreferenceToggle_e.swInputDimValOnCreate);
+    try{sw.SetUserPreferenceToggle((int)swUserPreferenceToggle_e.swInputDimValOnCreate,false);
+     switch(type){
+      case "horizontal":ddo=d.AddHorizontalDimension2(pos[0],pos[1],0);break;
+      case "vertical":ddo=d.AddVerticalDimension2(pos[0],pos[1],0);break;
+      case "angle":ddo=d.AddDimension2(pos[0],pos[1],0);break;
+      default:throw new Exception("guided type: horizontal, vertical or angle");}}
+    finally{sw.SetUserPreferenceToggle((int)swUserPreferenceToggle_e.swInputDimValOnCreate,prompt);d.ClearSelection2(true);}
+    var dd=ddo as IDisplayDimension;if(dd==null)throw new Exception("SolidWorks did not create the "+type+" dimension on the line");
+    var dim=(IDimension)dd.GetDimension2(0);d.EditRebuild3();value=ang?dim.SystemValue*180/Math.PI:dim.SystemValue*1000;
+    if(Math.Abs(value-expect)<=tol)return new{view=view.Name,type=type,value=Math.Round(value,4),unit=ang?"deg":"mm",name=dim.FullName,guides=segs.Count,note="Driven (reference) dimension on a construction line of the view, its value checked; unsaved until sw_save."};
+    var an=(IAnnotation)dd.GetAnnotation();if(an.Select3(false,null))d.Extension.DeleteSelection2(0);d.ClearSelection2(true);}
+   throw new Exception("It measured "+Math.Round(value,4)+" and should be "+expect+": line and dimension removed");
+  }catch{wipe();throw;}
+  finally{d.SketchManager.AddToDB=addRel;}
  }
 }

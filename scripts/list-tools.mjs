@@ -16,7 +16,7 @@ const type = s => {
 const esc = t => String(t ?? '').replace(/\|/g, '\\|').replace(/\r?\n/g, ' ');
 const groups = [
   ['Session and documents', /^sw_(status|environment|instance|session_health|exam_ready|create_part|create_assembly|open_copy|open_project|resume|close_document|save|checkpoint|restore_backup|copy_renamed|import_model|document_units|configuration)/],
-  ['Part modeling', /^sw_(create_sketch|sketch|extrude|cut|revolve|fillet|chamfer|shell|rib|draft|sweep|loft|helix|thread|hole_wizard|mirror|circular_pattern|linear_pattern|ref_|sketch_plane|tangent|move_body|scale_uniform|create_cylinder|set_dimension|equations|parameters|part_flex|part_build|extrude_edit|delete_feature|suppress_feature|delete_relation|relations|radius_dimension|set_material|sheet_metal|save_body)/],
+  ['Part modeling', /^sw_(dome|split_line|create_sketch|sketch|extrude|cut|revolve|fillet|chamfer|shell|rib|draft|sweep|loft|helix|thread|hole_wizard|mirror|circular_pattern|linear_pattern|ref_|sketch_plane|tangent|move_body|scale_uniform|create_cylinder|set_dimension|equations|parameters|part_flex|part_build|extrude_edit|delete_feature|suppress_feature|delete_relation|relations|radius_dimension|set_material|sheet_metal|save_body)/],
   ['Assemblies', /^sw_(assembly|insert_component|add_mate|edit_mate|delete_mate|mates|move_component|component|replace_component|find_faces|find_origin|coordinate_system|collision|interference|explode|mass_override)/],
   ['Drawings and reading drawings', /^sw_(drawing|create_drawing|bom|balloons|measure_sheet|answer_sheet)/],
   ['Verification, export and delivery', /^sw_/],

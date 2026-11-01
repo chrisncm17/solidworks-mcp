@@ -26,9 +26,14 @@ partial class Worker {
     d.ClearSelection2(true);
     if(!circ&&!SketchFeature(d,Str(a,"profile")).Select2(true,1))throw new Exception("Cannot select the profile sketch");
     if(!Feature(d,Str(a,"path")).Select2(true,4))throw new Exception("Cannot select the path (sketch or helix)");
+    // v3.16 guide curves give the section its shape along the path; the orientation says how it turns
+    if(a.ContainsKey("guides"))foreach(var g in Items(a["guides"]).Select(Convert.ToString))if(!Feature(d,g).Select2(true,2))throw new Exception("Cannot select the guide "+g);
+    string tw=Str2(a,"orientation","follow_path");int twist=tw=="keep_normal"?1:tw=="follow_path_first_guide"?2:tw=="follow_first_second_guide"?3:tw=="twist_along_path"?8:tw=="normal_twist_along_path"?9:0;
+    double twistRad=(a.ContainsKey("twist_deg")?Num(a,"twist_deg"):0)*Math.PI/180;
+    if((twist==8||twist==9)!=a.ContainsKey("twist_deg"))throw new Exception("twist_deg goes with orientation twist_along_path or normal_twist_along_path");
     f=cut
-     ?d.FeatureManager.InsertCutSwept4(false,false,0,false,false,0,0,false,0,0,0,0,true,true,0,true,true,true,false)
-     :d.FeatureManager.InsertProtrusionSwept4(false,false,0,false,false,0,0,false,0,0,0,0,Flag(a,"merge",true),true,true,0,true,circ,circ?Num(a,"circular_diameter_mm")/1000:0,0);
+     ?d.FeatureManager.InsertCutSwept4(false,false,(short)twist,false,false,0,0,false,0,0,0,0,true,true,twistRad,true,true,true,false)
+     :d.FeatureManager.InsertProtrusionSwept4(false,false,twist,false,false,0,0,false,0,0,0,0,Flag(a,"merge",true),true,true,twistRad,true,circ,circ?Num(a,"circular_diameter_mm")/1000:0,0);
    }finally{d.ClearSelection2(true);}
    if(f==null)throw new Exception("Sweep failed: the path must start on the profile plane (pierce it) and the profile must be closed"+(cut?"; the sweep must intersect the body":""));
    result=new{feature=f.Name,inspection=Checked(d)};return true;
@@ -66,6 +71,11 @@ partial class Worker {
    NewName(d,a);var before=FeatureNames(d);
    try{
     d.ClearSelection2(true);
+    // v3.16 a wall with its own thickness goes selected with mark 2, and the selection must stay: clearing it forgets the thickness, any other mark removes the wall
+    if(a.ContainsKey("face_thickness")){
+     var kept=Items(a["face_thickness"]).Cast<Dictionary<string,object>>().ToList();
+     if(a.ContainsKey("face_references")&&kept.Any(o=>Items(a["face_references"]).Select(Convert.ToString).Contains(Str(o,"face_reference"))))throw new Exception("A face cannot be removed and also have its own thickness");
+     foreach(var o in kept){SelectMarked(d,FaceRef(d,Str(o,"face_reference"),"face_thickness"),2,"face with its own thickness");d.InsertFeatureShellAddThickness(Num(o,"thickness_mm")/1000);}}
     if(a.ContainsKey("face_references"))foreach(var r in Items(a["face_references"]).Select(Convert.ToString))SelectMarked(d,FaceRef(d,r,"face_references"),0,"face to remove");
     d.InsertFeatureShell(Num(a,"thickness_mm")/1000,Flag(a,"outward"));
    }finally{d.ClearSelection2(true);}

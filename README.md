@@ -2,7 +2,7 @@
 
 ![SolidWorks MCP: AI agents model, assemble, verify and draw in SOLIDWORKS](docs/images/social_preview.png)
 
-**Let an AI agent model, assemble, verify and draw in SolidWorks.** A [Model Context Protocol](https://modelcontextprotocol.io) server for SolidWorks on Windows with 112 tools: parts from a short recipe, whole assemblies in one call, exact mass and center of mass, drawings with BOM, balloons and section views, and reading of PDF/DXF drawings - all with backups and verified rollback so your own files are never broken.
+**Let an AI agent model, assemble, verify and draw in SolidWorks.** A [Model Context Protocol](https://modelcontextprotocol.io) server for SolidWorks on Windows with 120 tools: parts from a short recipe, whole assemblies in one call, exact mass and center of mass, drawings with BOM, balloons and section views, and reading of PDF/DXF drawings - all with backups and verified rollback so your own files are never broken.
 
 Works with **Claude Desktop, Claude Code, OpenAI Codex (CLI / IDE)** and any MCP client that can launch a local (stdio) server.
 
@@ -64,7 +64,7 @@ Ask your agent: *"Start SolidWorks with sw_exam_ready, then build a 100 x 60 x 1
 ## All tools
 
 <!-- tools:start -->
-**114 tools.** Every option of every tool: [docs/TOOLS.md](docs/TOOLS.md).
+**120 tools.** Every option of every tool: [docs/TOOLS.md](docs/TOOLS.md).
 
 <details><summary><b>Session and documents</b> (20)</summary>
 
@@ -93,7 +93,7 @@ Ask your agent: *"Start SolidWorks with sw_exam_ready, then build a 100 x 60 x 1
 
 </details>
 
-<details><summary><b>Part modeling</b> (39)</summary>
+<details><summary><b>Part modeling</b> (43)</summary>
 
 | Tool | What it does |
 |---|---|
@@ -104,7 +104,9 @@ Ask your agent: *"Start SolidWorks with sw_exam_ready, then build a 100 x 60 x 1
 | `sw_cut` | Keeps the SolidWorks default tree name (features are never renamed); |
 | `sw_delete_feature` | Delete a named feature and its absorbed sketch from a managed part (for example a failed attempt), so the FeatureManager tree stays clean. |
 | `sw_delete_relation` | Delete one inspected sketch relation on a managed copy. |
+| `sw_dome` | Dome (Cupula) on a planar face: face_point_mm a point ON the face, height_mm, reverse=true makes it concave, elliptical=true on a circular or elliptical face. |
 | `sw_draft` | Keeps the SolidWorks default tree name (features are never renamed); |
+| `sw_draft_analysis` | Draft analysis (Analisis de angulo de salida), read only: every face of the part against the pull direction [x,y,z]: positive (comes out with one half), negative (with th… |
 | `sw_equations` | Read equations and global variables from the ACTIVE document, including unsaved parts and active sketches. |
 | `sw_extrude` | Keeps the SolidWorks default tree name (features are never renamed); |
 | `sw_extrude_edit` | Change an EXISTING extrusion (boss or cut) without redrawing it: end_condition of direction 1 (blind, mid_plane, through_all), depth_mm and/or reverse. |
@@ -131,7 +133,9 @@ Ask your agent: *"Start SolidWorks with sw_exam_ready, then build a 100 x 60 x 1
 | `sw_sheet_metal` | Chapa metálica on a managed part. |
 | `sw_shell` | Keeps the SolidWorks default tree name (features are never renamed); |
 | `sw_sketch` | Read sketch segments, their current indexes, coordinates in meters and relation types. |
+| `sw_sketch_3d` | 3D sketch (Croquis 3D): a path that is not in one plane, for sw_sweep or as a guide. |
 | `sw_sketch_plane` | Move an existing sketch onto another planar support (Editar plano de croquis) without redrawing it: face_of_sketch (the face/plane another sketch sits on), plane (referen… |
+| `sw_split_line` | Split line (Linea de particion) by projection: the sketch is projected onto the faces given by face_points_mm (a point ON each face), dividing them so part of a face can … |
 | `sw_suppress_feature` | Suppress or unsuppress a named feature in the active configuration of a managed part and rebuild. |
 | `sw_sweep` | Keeps the SolidWorks default tree name (features are never renamed); |
 | `sw_tangent` | Add a relation between two current sketch segment indexes; |
@@ -172,7 +176,7 @@ Ask your agent: *"Start SolidWorks with sw_exam_ready, then build a 100 x 60 x 1
 
 </details>
 
-<details><summary><b>Drawings and reading drawings</b> (13)</summary>
+<details><summary><b>Drawings and reading drawings</b> (15)</summary>
 
 | Tool | What it does |
 |---|---|
@@ -181,6 +185,8 @@ Ask your agent: *"Start SolidWorks with sw_exam_ready, then build a 100 x 60 x 1
 | `sw_bom` | Bill of materials (lista de materiales / BOM) on a managed DRAWING. |
 | `sw_create_drawing` | Create a native drawing with three standard orthographic views of a SAVED managed part/assembly using a DRWDOT template. |
 | `sw_drawing_annotate` | Add the MODEL dimensions to drawing views (Insert Model Items: dimensions marked for drawing; |
+| `sw_drawing_dim_check` | Supervise the dimensions of a managed DRAWING from their REAL geometry: texts over texts (text_overlap), a line of another dimension across a text (text_on_line), texts o… |
+| `sw_drawing_dim_organize` | Leave on a part sheet the dimensions needed to make the part and no more, each one once, shared among the views. |
 | `sw_drawing_dimension` | Manual dimensions on a managed DRAWING view (Cota inteligente). |
 | `sw_drawing_edit` | Clean up a managed DRAWING sheet. |
 | `sw_drawing_new` | Low-level, used by sw_assembly_drawing: empty drawing from a DRWDOT template with a width_mm x height_mm sheet, saved at an absolute path inside generated/drawings (never… |
@@ -222,7 +228,7 @@ Ask your agent: *"Start SolidWorks with sw_exam_ready, then build a 100 x 60 x 1
 ```
 MCP client (Claude / Codex / ...)
    │  stdio, JSON-RPC
-server/server.mjs ── tools.mjs (108 JSON schemas + cross-checks), recipes (MCP resources)
+server/server.mjs ── tools.mjs (120 JSON schemas + cross-checks), recipes (MCP resources)
    │  high-level tools in JS: part_ir, assembly_build, assembly_drawing, drawing_read (+ Python PDF/DXF helpers)
    │  one JSON line per call
 server/Worker-equations.exe  (C#, STA, SolidWorks COM API) ── safe-edit guard: health check, rollback, backups
