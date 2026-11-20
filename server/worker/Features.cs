@@ -60,9 +60,12 @@ partial class Worker {
   }
   if(op=="mirror"){
    string name=NewName(d,a);d.ClearSelection2(true);
-   SelectFeatures(d,a,1);if(!PlaneByIndex(d,Convert.ToInt32(a["plane_index"])).Select2(true,2))throw new Exception("Plane selection failed");
-   var f=(IFeature)d.FeatureManager.InsertMirrorFeature2(false,false,false,false,(int)swFeatureScope_e.swFeatureScope_AllBodies);
-   if(f==null)throw new Exception("Mirror failed");Rename(f,name);result=new{feature=f.Name,inspection=Checked(d)};return true;
+   // v3.20 bodies (Simetría → Sólidos/Superficies): a point on each body to mirror, solid or surface, instead of features
+   bool bodies=a.ContainsKey("body_points_mm");
+   if(bodies)foreach(var p in Pts(a,"body_points_mm"))Mark(d,AnyFaceAt(d,p,"body_points_mm").GetBody(),256,"body");else SelectFeatures(d,a,1);
+   if(!PlaneByIndex(d,Convert.ToInt32(a["plane_index"])).Select2(true,2))throw new Exception("Plane selection failed");
+   var f=(IFeature)d.FeatureManager.InsertMirrorFeature2(bodies,false,bodies&&Flag(a,"merge"),bodies&&Flag(a,"knit"),(int)swFeatureScope_e.swFeatureScope_AllBodies);
+   if(f==null)throw new Exception("Mirror failed"+(bodies?": each point must lie on a body face, and merge needs solids that touch the plane":""));Rename(f,name);result=new{feature=f.Name,inspection=Checked(d)};return true;
   }
   if(op=="circular_pattern"){
    string name=NewName(d,a);int n=Convert.ToInt32(a["count"]);double total=(a.ContainsKey("angle_deg")?Num(a,"angle_deg"):360)*Math.PI/180;

@@ -38,6 +38,8 @@ partial class Worker {
    var topAll=new List<string>();for(var f=d.FirstFeature() as IFeature;f!=null;f=f.GetNextFeature() as IFeature)if(!internalNames.Contains(f.Name))topAll.Add(f.Name);
    h["top_features"]=topAll.OrderBy(x=>x,StringComparer.Ordinal).ToArray();
    if(type==1){int count=Items(((IPartDoc)d).GetBodies2(0,true)??new object[0]).Count();h["bodies"]=count;double volume=0;
+    // v3.19 surface bodies: a part built in the Surfaces tab has none solid until it is knit or thickened
+    h["surface_bodies"]=Items(((IPartDoc)d).GetBodies2(1,true)??new object[0]).Count();
     if(count>0&&!light){var mp=(IMassProperty2)d.Extension.CreateMassProperty2();if(mp==null)throw new Exception("No se pudo medir el volumen");mp.UseSystemUnits=true;if(!mp.Recalculate())throw new Exception("No se pudo recalcular el volumen");volume=mp.Volume*1e9;if(double.IsNaN(volume)||double.IsInfinity(volume))throw new Exception("Volumen no finito");}h["volume_mm3"]=volume;
    }
    if(type==2){h["broken_mates"]=BrokenMates(d).OrderBy(x=>x,StringComparer.Ordinal).ToArray();h["mate_warnings"]=Mates(d).Where(f=>{bool w;return f.GetErrorCode2(out w)!=0&&w;}).Select(f=>f.Name).OrderBy(x=>x,StringComparer.Ordinal).ToArray();
@@ -56,7 +58,7 @@ partial class Worker {
   foreach(var kv in HealthMap(h,"bad_sketches"))p.Add("Croquis inv\u00e1lido "+kv.Key+" (estado "+kv.Value+")");
   foreach(string n in HealthNames(h,"broken_mates"))p.Add("Relaci\u00f3n rota "+n);
   foreach(string n in HealthNames(h,"missing_components"))p.Add("Componente faltante "+n);
-  if(h.ContainsKey("bodies")&&Convert.ToInt32(h["bodies"])==0)p.Add("Pieza sin cuerpos s\u00f3lidos");
+  if(h.ContainsKey("bodies")&&Convert.ToInt32(h["bodies"])==0&&!(h.ContainsKey("surface_bodies")&&Convert.ToInt32(h["surface_bodies"])>0))p.Add("Pieza sin cuerpos s\u00f3lidos");
   if(Convert.ToInt32(h["whats_wrong"])>0)p.Add("GetWhatsWrong: "+h["whats_wrong"]+" errores");return p.OrderBy(x=>x,StringComparer.Ordinal).ToList();
  }
  static List<string> HealthRegressions(Dictionary<string,object> before,Dictionary<string,object> after){

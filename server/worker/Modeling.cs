@@ -228,6 +228,7 @@ partial class Worker {
     } finally {d.SketchManager.AddToDB=oldDb;}
     if(Flag(a,"dimension")){try{dimInfo=FullyDefine(d,sketch,sf);dimRef=SketchGeometry(sketch);}catch(Exception ex){dimFail=ex.Message;}}skt[2]=skw.ElapsedMilliseconds;
    } finally {try{d.SketchManager.DisplayWhenAdded=gdisp;if(gview!=null)gview.EnableGraphicsUpdate=gupd;}catch{}if(d.SketchManager.ActiveSketch!=null)d.SketchManager.InsertSketch(true);d.ClearSelection2(true);}
+   object dimOrder=null;
    if(Flag(a,"dimension")){
     // re-check after leaving the sketch and rebuilding; on any failure remove the whole new sketch (never leave it half-dimensioned)
     if(dimFail==null){d.EditRebuild3();var now=SketchGeometry(sketch);double mv=dimRef==null||now.Count!=dimRef.Count?double.PositiveInfinity:now.Zip(dimRef,(x,y)=>Math.Abs(x-y)).DefaultIfEmpty(0).Max();
@@ -235,9 +236,11 @@ partial class Worker {
     if(dimFail!=null){string nm=sf.Name;d.ClearSelection2(true);bool gone=sf.Select2(false,0)&&d.Extension.DeleteSelection2((int)swDeleteSelectionOptions_e.swDelete_Absorbed);d.ClearSelection2(true);d.ForceRebuild3(false);
      gone=gone&&!AllFeatures(d).Any(x=>x.Name==nm);
      throw new Exception("Dimensioning failed: "+dimFail+(gone?"; the new sketch "+nm+" was removed":"; the new sketch "+nm+" could NOT be removed, delete it with sw_delete_feature"));}
+    // v3.20 then put the dimensions in order (only their texts move; a failure here leaves them where SolidWorks put them)
+    try{dimOrder=ArrangeSketchDims(d,sketch,sf);}catch(Exception ex){dimOrder=new{error=ex.Message};}
    }
    skt[3]=skw.ElapsedMilliseconds;var insp=Checked(d,false,!Flag(a,"light_guard"));skt[4]=skw.ElapsedMilliseconds;
-   result=new{sketch=sf.Name,status=sketch.GetConstrainedStatus(),fixed_geometry=Flag(a,"fix_geometry"),dimensioning=dimInfo,merged_endpoints=merged,sketch_fillets=filleted,sketch_chamfers=chamfered,sketch_normal=SketchNormal(sketch),open_contours=openContours,inspection=insp,split_ms=skt};return true;
+   result=new{sketch=sf.Name,status=sketch.GetConstrainedStatus(),fixed_geometry=Flag(a,"fix_geometry"),dimensioning=dimInfo,dimension_order=dimOrder,merged_endpoints=merged,sketch_fillets=filleted,sketch_chamfers=chamfered,sketch_normal=SketchNormal(sketch),open_contours=openContours,inspection=insp,split_ms=skt};return true;
   }
   if(op=="extrude"||op=="cut"){
    string name=NewName(d,a);var sketch=Feature(d,Str(a,"sketch"));if(!(sketch.GetSpecificFeature2() is ISketch))throw new Exception("Selected feature is not a sketch");

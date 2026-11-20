@@ -64,7 +64,7 @@ Ask your agent: *"Start SolidWorks with sw_exam_ready, then build a 100 x 60 x 1
 ## All tools
 
 <!-- tools:start -->
-**120 tools.** Every option of every tool: [docs/TOOLS.md](docs/TOOLS.md).
+**121 tools.** Every option of every tool: [docs/TOOLS.md](docs/TOOLS.md).
 
 <details><summary><b>Session and documents</b> (20)</summary>
 
@@ -85,7 +85,7 @@ Ask your agent: *"Start SolidWorks with sw_exam_ready, then build a 100 x 60 x 1
 | `sw_open_project` | Open a USER part, assembly or drawing in place (outside generated) after an AUTOMATIC BACKUP of the file and every referenced file into generated/backups/<timestamp>_<nam… |
 | `sw_restore_backup` | List backups made by sw_open_project (action=list) or restore one (action=restore, backup_name): copies every backed-up file back to its original path. |
 | `sw_resume_copy` | Reopen a named SLDPRT from the managed generated folder of this server. |
-| `sw_resume_document` | Resume an existing managed native part, assembly or drawing by filename. |
+| `sw_resume_document` | Resume an existing managed native part, assembly or drawing by filename, also a copy of sw_copy_renamed. |
 | `sw_save` | allow_errors: save anyway, reporting the problems; |
 | `sw_save_body` | Save ONE solid body of a multibody managed part as a NEW managed part (Guardar cuerpo): pick it with point_mm (a point ON a face of that body, part coordinates) or body_i… |
 | `sw_session_health` | Why SolidWorks feels slow: RAM used by SolidWorks and free system RAM, open documents (visible, hidden, unsaved, owned by this MCP session, in use) and hints. |
@@ -198,7 +198,7 @@ Ask your agent: *"Start SolidWorks with sw_exam_ready, then build a 100 x 60 x 1
 
 </details>
 
-<details><summary><b>Verification, export and delivery</b> (16)</summary>
+<details><summary><b>Verification, export and delivery</b> (17)</summary>
 
 | Tool | What it does |
 |---|---|
@@ -216,6 +216,7 @@ Ask your agent: *"Start SolidWorks with sw_exam_ready, then build a 100 x 60 x 1
 | `sw_part_diff` | Read-only comparison of a managed PART against an original .SLDPRT (absolute path, opened read-only through a temporary copy): volume, mass, material, solid body count, s… |
 | `sw_preview` | PNG preview(s) returned as images: a managed part/assembly in one or more standard views (views, default [iso]) or the whole current drawing sheet. |
 | `sw_session_recipe` | Record what this session does and turn it into a recipe the next chat can follow (MCP resource solidworks://recipe/<id>). |
+| `sw_surface` | The Surfaces tab (Superficies), one action per call, on a managed part; |
 | `sw_topology` | Inspect faces and unique edges with short-lived selection references. |
 | `sw_wrap` | Envolver: wrap a closed sketch onto a face of the part. |
 

@@ -19,16 +19,19 @@ import { recordStep, summarize } from './exam_state.mjs';
 import { assemblyDrawing } from './assembly_drawing.mjs';
 import { superviseDimensions, dimensionWarning, organizeDimensions } from './dims_layout.mjs';
 import { recordCall, sessionRecipe } from './session_recorder.mjs';
+import { answerInTime } from './answer_in_time.mjs';
+import { surfacesModeCall } from './surfaces_mode.mjs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 const GENERATED = join(dirname(fileURLToPath(import.meta.url)), 'generated');
 
 const ajv = new Ajv({ strict: true, allErrors: true });
 const validators = new Map(tools.map(t => [t.name, ajv.compile(t.validationSchema || t.inputSchema)]));
-const worker = new WorkerClient();
+// v3.18 no soft timeout per worker call: answerInTime answers the client, and a step past 150 s must not fail a job of several steps
+const worker = new WorkerClient({ timeoutMs: 0 });
 const server = new Server({ name: 'solidworks-local', version: MCP_VERSION }, {
   capabilities: { tools: {}, resources: {} },
-  instructions: 'SolidWorks connector for Windows. Start with sw_status and sw_environment; sw_exam_ready {start:true} starts a minimized SolidWorks owned by the MCP (separate from the user one). Proven workflows are MCP resources (solidworks://recipe/...): read the matching one before building whole assemblies or drawings. CAD mutations are limited to managed copies/new documents, or to user files opened with sw_open_project, which first backs up the file and all its references (restore with sw_restore_backup; close with sw_close_document). Inspect before editing, checkpoint when needed, verify volume then save. Geometry reference tokens expire after edits; refresh sw_topology. New modeling tools use mm and degrees; legacy set_dimension uses SI meters/radians. Do not scale to disguise drawing errors, invent materials or override mass. Real cut threads require installed profiles and exact sizes. Sketch coordinates are local XY. All calls serialize; failed edits can leave unsaved changes and cancellation/timeout leaves outcome unknown. Assemblies: sw_assembly_new, sw_insert_component (component ORIGIN at position_mm), sw_add_mate (prefer {component, local_point_mm} faces or component planes; check moved_components to confirm the side chosen; width centers a tab in a slot), sw_move_component to pre-orient/drive free parts, sw_delete_mate, sw_mates (list/suppress), sw_set_dimension on mate dimensions (D1@Distancia1, radians for angles) to drive mechanisms, and sw_interference (never saves; sw_collision drives a distance/angle mate to the first contact; sw_edit_mate changes value/flip/alignment without deleting). Save with include_references=true before sw_pack_and_go; sw_part_diff proves changes against originals; sw_pack_and_go packages and verifies deliveries. Drawings: sw_assembly_drawing makes the whole sheet; sw_drawing_read reads PDF/DXF drawings. No unrestricted scripting.',
+  instructions: 'SolidWorks connector for Windows. Start with sw_status and sw_environment; sw_exam_ready {start:true} starts a minimized SolidWorks owned by the MCP (separate from the user one). Proven workflows are MCP resources (solidworks://recipe/...): read the matching one before building whole assemblies or drawings. CAD mutations are limited to managed copies/new documents, or to user files opened with sw_open_project, which first backs up the file and all its references (restore with sw_restore_backup; close with sw_close_document). Inspect before editing, checkpoint when needed, verify volume then save. Geometry reference tokens expire after edits; refresh sw_topology. New modeling tools use mm and degrees; legacy set_dimension uses SI meters/radians. Do not scale to disguise drawing errors, invent materials or override mass. Real cut threads require installed profiles and exact sizes. Sketch coordinates are local XY. All calls serialize; failed edits can leave unsaved changes and cancellation/timeout leaves outcome unknown. A call that passes 50 s answers running:true and keeps going: do not repeat it or save; its result arrives as late_results in the next response. Assemblies: sw_assembly_new, sw_insert_component (component ORIGIN at position_mm), sw_add_mate (prefer {component, local_point_mm} faces or component planes; check moved_components to confirm the side chosen; width centers a tab in a slot), sw_move_component to pre-orient/drive free parts, sw_delete_mate, sw_mates (list/suppress), sw_set_dimension on mate dimensions (D1@Distancia1, radians for angles) to drive mechanisms, and sw_interference (never saves; sw_collision drives a distance/angle mate to the first contact; sw_edit_mate changes value/flip/alignment without deleting). Save with include_references=true before sw_pack_and_go; sw_part_diff proves changes against originals; sw_pack_and_go packages and verifies deliveries. Drawings: sw_assembly_drawing makes the whole sheet; sw_drawing_read reads PDF/DXF drawings. No unrestricted scripting.',
 });
 server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: tools.map(({ operation, validationSchema, ...definition }) => definition) }));
 server.setRequestHandler(ListResourcesRequestSchema, async () => ({ resources: resourceList() }));
@@ -36,9 +39,12 @@ server.setRequestHandler(ReadResourceRequestSchema, async request => readRecipe(
 // v3.11 late_results: what finished after its own call was cancelled or timed out is attached to the next response
 server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
   const t0 = performance.now();
-  const out = await handleCall(request, extra);
-  // v3.11 session recording (sw_session_recipe): every call is noted while a recording is active
-  try { const tool = tools.find(t => t.name === request.params.name); if (tool) { let parsed = null; try { parsed = JSON.parse(out.content?.[0]?.text ?? 'null'); } catch { parsed = { ok: !out.isError, error: out.content?.[0]?.text }; } if (out.isError && parsed && typeof parsed === 'object') parsed.ok = false; recordCall(GENERATED, tool.operation, request.params.arguments ?? {}, parsed, performance.now() - t0); } } catch { }
+  const job = handleCall(request, extra).then(out => {
+    // v3.11 session recording (sw_session_recipe): every call is noted while a recording is active
+    try { const tool = tools.find(t => t.name === request.params.name); if (tool) { let parsed = null; try { parsed = JSON.parse(out.content?.[0]?.text ?? 'null'); } catch { parsed = { ok: !out.isError, error: out.content?.[0]?.text }; } if (out.isError && parsed && typeof parsed === 'object') parsed.ok = false; recordCall(GENERATED, tool.operation, request.params.arguments ?? {}, parsed, performance.now() - t0); } } catch { }
+    return out;
+  });
+  const out = await answerInTime(job, { tool: request.params.name, late: () => worker.late, signal: extra.signal });
   const late = worker.takeLate();
   if (late.length) {
     const { compactWorkerResponse } = await import('./compact.mjs');
@@ -53,6 +59,8 @@ async function handleCall(request, extra) {
   if (!tool || !validator(args)) return { isError: true, content: [{ type: 'text', text: tool ? `Invalid arguments: ${ajv.errorsText(validator.errors)}` : 'Unknown SolidWorks tool' }] };
   const error = argumentError(tool.operation, args);
   if (error) return { isError: true, content: [{ type: 'text', text: error }] };
+  const surfaceMode = surfacesModeCall(tool.operation, args);
+  if (surfaceMode) return surfaceMode;
   try {
     if (tool.operation === 'drawing_read' && args.action === 'dimensions') {
       const { drawingDimensions } = await import('./dims_geometry.mjs');
@@ -118,13 +126,17 @@ async function handleCall(request, extra) {
       try { return { content: [{ type: 'text', text: JSON.stringify({ ok: true, result: await assemblyDiff(worker, args, { signal: extra.signal }) }) }] }; }
       catch (e) { return { isError: true, content: [{ type: 'text', text: e.message }] }; }
     }
-    if (tool.operation === 'drawing_dim_organize') {
-      try { const result = await organizeDimensions(worker, args, { signal: extra.signal }); return { content: [{ type: 'text', text: JSON.stringify({ ok: true, result }) }] }; }
-      catch (e) { return { isError: true, content: [{ type: 'text', text: e.message }] }; }
-    }
-    if (tool.operation === 'drawing_dim_check') {
-      try { const result = await superviseDimensions(worker, args, { signal: extra.signal }); return { content: [{ type: 'text', text: JSON.stringify({ ok: true, result }) }] }; }
-      catch (e) { return { isError: true, content: [{ type: 'text', text: e.message }] }; }
+    if (tool.operation === 'drawing_dim_organize' || tool.operation === 'drawing_dim_check') {
+      // v3.18 these delete dimensions and put them back: like a build, a cancel does not stop them half way, and other calls wait
+      const { trackJob } = await import('./assembly_build.mjs'), organize = tool.operation === 'drawing_dim_organize';
+      const run = (organize ? organizeDimensions : superviseDimensions)(worker, args);
+      if (organize || args.fix) trackJob(`${tool.operation}:${Date.now()}`, run, { forget: true });
+      try {
+        const result = await run;
+        if (extra.signal?.aborted) worker.late.push({ operation: tool.operation, reason: 'client cancel', response: { ok: true, result } });
+        return { content: [{ type: 'text', text: JSON.stringify({ ok: true, result }) }] };
+      }
+      catch (e) { if (extra.signal?.aborted) worker.late.push({ operation: tool.operation, reason: 'client cancel', error: e.message }); return { isError: true, content: [{ type: 'text', text: e.message }] }; }
     }
     const raw = await worker.call(tool.operation, args, { signal: extra.signal });
     // v3.15 nobody delivers a sheet with crashed dimensions unseen: annotate leaves them fixed, a PDF export reports what is left

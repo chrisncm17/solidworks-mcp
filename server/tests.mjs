@@ -1998,6 +1998,23 @@ test('v3.16 advanced modeling: schemas of guides, orientation, variable fillet, 
   ok('sw_split_line', { document_id: 'x', sketch: 'S', face_points_mm: [[0, 0, 1]] }); no('sw_split_line', { document_id: 'x', sketch: 'S', face_points_mm: [] });
   ok('sw_draft_analysis', { document_id: 'x', direction: [0, 0, 1], min_draft_deg: 2 }); no('sw_draft_analysis', { document_id: 'x' });
 });
+test('v3.19 surfaces: sw_surface schema and the surfaces-only mode refuses the Features tab', async () => {
+  const ok = (n, a) => assert.equal(validate.get(n)(a), true, n + ' ' + JSON.stringify(a)), no = (n, a) => assert.equal(validate.get(n)(a), false, n + ' ' + JSON.stringify(a));
+  ok('sw_surface', { document_id: 'x', action: 'extrude', sketch: 'Croquis1', depth_mm: 26, mid_plane: true });
+  ok('sw_surface', { document_id: 'x', action: 'trim', tool_points_mm: [[0, 0, 0]], keep_points_mm: [[1, 2, 3]] });
+  ok('sw_surface', { document_id: 'x', action: 'knit', form_solid: true });
+  ok('sw_surface', { document_id: 'x', action: 'thicken_cut', body_point_mm: [0, 36, 0], thickness_mm: 20, side: 'side2' });
+  no('sw_surface', { document_id: 'x', action: 'chamfer' }); no('sw_surface', { document_id: 'x', action: 'trim', keep_points_mm: [[1, 2]] }); no('sw_surface', { document_id: 'x' });
+  const { surfacesModeCall } = await import('./surfaces_mode.mjs');
+  assert.equal(surfacesModeCall('extrude', { document_id: 'P' }), null);
+  assert.equal(surfacesModeCall('surface', { document_id: 'P', action: 'mode' }).isError, true);
+  assert.equal(surfacesModeCall('surface', { document_id: 'P', action: 'mode', on: true }).isError, false);
+  assert.match(surfacesModeCall('extrude', { document_id: 'P' }).content[0].text, /Features tab/);
+  assert.equal(surfacesModeCall('extrude', { document_id: 'Q' }), null);
+  for (const allowed of ['surface', 'create_sketch', 'ref_plane', 'fillet', 'set_material', 'save', 'inspect']) assert.equal(surfacesModeCall(allowed, { document_id: 'P', action: 'knit' }), null, allowed);
+  surfacesModeCall('surface', { document_id: 'P', action: 'mode', on: false });
+  assert.equal(surfacesModeCall('cut', { document_id: 'P' }), null);
+});
 test('v3.15 organize: dimensions are shared among the views, circles where they are circles', async () => {
   const { assignViews } = await import('./dims_layout.mjs');
   const views = new Map([['V1', { outline_mm: [0, 0, 70, 25] }], ['V2', { outline_mm: [0, 40, 70, 65] }], ['V3', { outline_mm: [90, 0, 115, 25] }]]);
@@ -2805,4 +2822,30 @@ test('v3.17 plan: a leader runs under its whole text, also under the blanks that
   const free = to('R5.00', 3), t = Math.atan2(free[1] - 100, free[0] - 80), past = 4.6, x = free[0] + past * Math.cos(t), y = free[1] + past * Math.sin(t), note = [{ text: 'NOTA', box: [x - 0.5, y - 0.5, x + 0.5, y + 0.5] }];
   assert.deepEqual(to('R5.00', 3, note), free, 'its line ends before the note');
   assert.notDeepEqual(to('  R5.00  ', 5.4, note), free, 'this line would reach the note');
+});
+
+import { answerInTime } from './answer_in_time.mjs';
+import { backgroundJobs, waitBackground, trackJob } from './assembly_build.mjs';
+const later = (ms, text = '{"ok":true,"result":"hecho"}') => new Promise(r => setTimeout(() => r({ content: [{ type: 'text', text }] }), ms));
+test('v3.18 a call answers before the client limit: running, tracked, and its result arrives late', async () => {
+  let late = [];
+  const quick = await answerInTime(later(5), { tool: 'sw_rapida', late: () => late, withinMs: 500 });
+  assert.equal(JSON.parse(quick.content[0].text).result, 'hecho'); assert.equal(late.length, 0, 'what answers in time is not repeated');
+  const first = await answerInTime(later(80), { tool: 'sw_larga', late: () => late, withinMs: 10 }), said = JSON.parse(first.content[0].text);
+  assert.equal(said.running, true); assert.equal(said.ok, true); assert.equal(late.length, 0);
+  assert.ok(backgroundJobs().some(j => j.label.startsWith('sw_larga:')), 'other calls see it and wait for it');
+  late = [];   // as takeLate does on every response: the result must land in the list of that moment
+  await waitBackground();
+  assert.equal(late.length, 1); assert.equal(late[0].operation, 'sw_larga'); assert.equal(late[0].response.result, 'hecho');
+  assert.ok(!backgroundJobs().some(j => j.label.startsWith('sw_larga:')), 'its result went to late: it is not kept');
+});
+test('v3.18 a call waiting behind a long one says so, and a call the client cancelled does not answer running', async () => {
+  const late = [], first = later(80);
+  trackJob('organize:prueba', first, { forget: true });
+  const behind = await answerInTime(later(90), { tool: 'sw_status', late: () => late, withinMs: 10 });
+  assert.deepEqual(JSON.parse(behind.content[0].text).waiting_for, ['organize:prueba']);
+  await waitBackground();
+  const stop = new AbortController(); stop.abort();
+  const cancelled = await answerInTime(later(40), { tool: 'sw_cancelada', late: () => [], withinMs: 5, signal: stop.signal });
+  assert.equal(JSON.parse(cancelled.content[0].text).result, 'hecho');
 });

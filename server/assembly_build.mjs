@@ -458,9 +458,11 @@ export async function assemblyBuild(args, ctx = {}) {
 }
 // v3.8 background jobs (drawing after the answers, SolidWorks start while the chat reads the drawing): kept here until shown
 const JOBS = new Map();
-export function trackJob(label, promise) {
+export function trackJob(label, promise, { forget = false } = {}) {
   const j = { label, started: new Date().toISOString(), done: false, result: null };
   j.promise = promise.then(x => { j.done = true; j.result = x; return x; }, e => { j.done = true; j.result = { ok: false, error: e.message }; });
+  // v3.18 forget: its result goes by another way (late_results), so a finished one is not kept to be shown
+  if (forget) j.promise = j.promise.finally(() => JOBS.delete(label));
   JOBS.set(label, j); return j;
 }
 export function backgroundJobs() { return [...JOBS.values()].map(({ promise, ...j }) => j); }

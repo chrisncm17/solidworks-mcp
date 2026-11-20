@@ -55,6 +55,7 @@ partial class Worker {
   string act=a.ContainsKey("action")?Convert.ToString(a["action"]):null;
   if(act==null)return false;
   if(act=="list"||act=="read")return true;
+  if(op=="surface"&&act=="inspect")return true;
   if(op=="assembly_repair"&&(act=="snapshot"||act=="compare"))return true;
   if(op=="assembly_repair"&&act=="fix_mates"&&!Flag(a,"apply"))return true; // simulates and verifies its own revert
   return false;

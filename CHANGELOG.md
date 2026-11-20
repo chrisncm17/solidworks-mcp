@@ -1,5 +1,24 @@
 # Changelog
 
+## 3.20.0 - 2026-11-20
+- **Sketch dimensions in order:** `sw_create_sketch` with `dimension: true` left each dimension where Fully Define Sketch placed it, piled on the geometry and on each other. Now, like the tracks of a drawing, horizontal distances go in rows under the sketch and vertical ones in columns to its left, the shortest nearest and two in one row only when they do not overlap; radii and diameters go just outside their arc. Only the texts move; `dimension_order` in the result says how many, and `why_left` names any it could not place. Fully Define gives horizontal (11) and vertical (12) linear types, not plain linear (2); the first build missed that and moved only the radii.
+- **`sw_surface` extrude up to a surface:** `end` `up_to_surface` or `offset_from_surface` stops at the face through `up_to_point_mm` (`offset_mm`, `offset_reverse`), instead of a depth to guess.
+- **`sw_mirror` of bodies:** `body_points_mm` mirrors whole bodies, solid or surface (Mirror → Bodies), with `merge` or `knit`; before it mirrored features only.
+
+## 3.19.0 - 2026-11-11
+Practiced on a student part (a half-tube support, AISI 1020, 664.70 g on its drawing) built with nothing but the Surfaces tab; it came out at 664.701 g. Run in SolidWorks 2026 SP3.2.
+- **`sw_surface`, the Surfaces tab:** extrude, revolve, planar, loft, sweep, offset, ruled, fill, trim, untrim, extend, knit, delete face, delete hole, replace face, thicken, thickened cut and cut with surface, one action per call; faces, edges and surface bodies are picked by a point on them.
+- **Surfaces only:** `sw_surface` action `mode` with `on: true` makes the Features tab (extrude, cut, revolve, loft, sweep, shell, patterns, hole wizard, rib, draft, part_build...) refuse that document until it is turned off; sketches, reference geometry, fillet, material, mass and save still work.
+- **It finds the gap before the knit does:** action `inspect` lists every surface body with its area and where its open edges are, so a face built the wrong way shows by its coordinates (a band extruded from z=-13 to z=+6 instead of to -32). A knit with `form_solid` that leaves no solid is an error with that list. The edge points were off by one edge length on reversed edges; now the point is checked to lie on its edge.
+- **What the API needs, found by trying:** knit wants its surfaces selected with mark 1, and it ignores "try to form solid" when the feature is made, so it is turned on afterwards in the feature definition; trim takes the tool by its feature or body and the pieces by body; thickened cut wants mark 1.
+- **Not solved:** a closed full-circle surface (a hole wall) does not trim through the API, not mutually and not as a target; the trim lists a WARNING when a target comes out whole. Make that hole with a thickened cut of a planar disk after the knit. Boundary surface, freeform and flatten are not in yet.
+- **Health:** a part with surface bodies and no solid is no longer reported as "without solid bodies".
+
+## 3.18.0 - 2026-11-01
+- **A long call no longer brings the server down:** in the Claude desktop app a call past 60 s gets `Request timed out` and another server takes over: document ids are lost and a job of several steps stays half done (`sw_drawing_dim_organize` left a sheet with 1 dimension of 23, and no `late_results` ever reached a chat). Now any call past 50 s answers `running: true` and keeps going as a tracked job; other SolidWorks calls wait for it and its result arrives as `late_results` in the next response.
+- **`sw_drawing_dim_organize` and `sw_drawing_dim_check`** are not stopped half way by a cancel, like the builds, and a step of any job is no longer failed at 150 s (the 30 min hard timeout stays).
+- **`sw_resume_document` reaches the copies of `sw_copy_renamed`,** also one open with unsaved changes whose id was lost, so it can be checked and closed.
+
 ## 3.17.0 - 2026-11-01
 Found while organizing real student sheets of a drawing compendium, always on copies that were closed without saving; run in SolidWorks 2026 SP3.2.
 - **`sw_drawing_dim_organize` asks the part what it needs:** it reads the faces of the part and keeps what someone needs to make it, axis by axis: N planes and centres take N-1 dimensions. A round is said once with its count (`4 X Ø10`, `2 X R3`, `R1 TYP`), a ring of holes by its pitch and the distance to the contour (with no contour by its pitch and count, unless a place of the ring is empty), one tooth says them all, a slanted face by its angle and the corner it had before its rounds, a tapered slot (the slot of a connecting rod) by the centres and radii of its ends, as drafted, not by the width between its walls. What no dimension says is drawn from the edges of a view; what cannot be followed is reported in `sufficiency`, and it never answers "enough" without having checked.

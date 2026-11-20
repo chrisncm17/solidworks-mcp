@@ -12,7 +12,12 @@ partial class Worker {
  static string ExistingManaged(string name){
   if(Path.GetFileName(name)!=name||name.IndexOfAny(Path.GetInvalidFileNameChars())>=0||!new[]{".sldprt",".sldasm",".slddrw"}.Contains(Path.GetExtension(name).ToLowerInvariant()))throw new Exception("Simple managed native filename required");
   // assembly_build saves in Root\assemblies and drawings go to Root\drawings: look there too (still only simple names inside Root)
-  string path=new[]{Root,Path.Combine(Root,"assemblies"),Path.Combine(Root,"drawings")}.Select(dir=>Path.Combine(dir,name)).FirstOrDefault(File.Exists)??Path.Combine(Root,name);if(!File.Exists(path)||(File.GetAttributes(path)&FileAttributes.ReparsePoint)!=0||!InsideRoot(path))throw new Exception("Managed document is missing or linked");return path;
+  string path=new[]{Root,Path.Combine(Root,"assemblies"),Path.Combine(Root,"drawings")}.Select(dir=>Path.Combine(dir,name)).FirstOrDefault(File.Exists);
+  // v3.18 a copy of sw_copy_renamed lives in copies\<folder>. With another worker its id is gone and, with changes, nothing else reaches it; of several with that name, the one that is open
+  if(path==null&&Directory.Exists(Path.Combine(Root,"copies"))){var found=Directory.GetDirectories(Path.Combine(Root,"copies")).Select(dir=>Path.Combine(dir,name)).Where(File.Exists).ToArray();
+   path=found.Length==1?found[0]:found.FirstOrDefault(p=>sw.GetOpenDocumentByName(p)!=null);
+   if(path==null&&found.Length>1)throw new Exception("Several copies have that name and none is open: "+string.Join(", ",found));}
+  path=path??Path.Combine(Root,name);if(!File.Exists(path)||(File.GetAttributes(path)&FileAttributes.ReparsePoint)!=0||!InsideRoot(path))throw new Exception("Managed document is missing or linked");return path;
  }
  static IModelDoc2 OpenNative(string path){
   var d=(IModelDoc2)sw.GetOpenDocumentByName(path);if(d!=null)return d;

@@ -1,6 +1,6 @@
 # Tools
 
-120 tools. Generated from `server/tools.mjs` by `npm run tools` - do not edit by hand.
+121 tools. Generated from `server/tools.mjs` by `npm run tools` - do not edit by hand.
 
 ## Session and documents
 
@@ -145,7 +145,7 @@ Reopen a named SLDPRT from the managed generated folder of this server. Does not
 
 ### `sw_resume_document`
 
-Resume an existing managed native part, assembly or drawing by filename. Returns a new session document_id. Part editing tools cannot edit assemblies/drawings.
+Resume an existing managed native part, assembly or drawing by filename, also a copy of sw_copy_renamed. If it is already open it takes it as it is, with its unsaved changes (this is how to reach a document whose id was lost; then sw_close_document). Returns a new session document_id. Part editing tools cannot edit assemblies/drawings.
 
 | Option | Type / values | Required | Notes |
 |---|---|---|---|
@@ -230,7 +230,7 @@ Create and save a new native parametric cylinder. Dimensions are millimeters; te
 
 ### `sw_create_sketch`
 
-Keeps the SolidWorks default tree name (features are never renamed); the response returns it. Create a 2D sketch from lines, arcs, circles and slots (start/end centers + width) on a reference plane (zero-based tree order: 0 Front, 1 Top, 2 Right, then planes made with sw_ref_plane) OR planar face reference. Coordinates are mm in local sketch XY, not world XY. Default fix_geometry=false leaves ordinary editable geometry; true adds fixed constraints, not driving dimensions. dimension=true instead FULLY DEFINES the sketch with relations and driving dimensions to the origin (SolidWorks Fully Define Sketch) without moving anything, so drawings get complete dimensions via sw_drawing_annotate and sw_set_dimension can change sizes later; if dimensioning fails (sketch moved or not fully defined) the new sketch is deleted and the error says so. Put the part origin at a corner or center of the profile for clean drawing dimensions (they are measured from the origin). dimension and fix_geometry are exclusive. fillets rounds corners and chamfers bevels them (distance, distance+distance2 or distance+angle_deg) at the point where two segments meet (local mm). Returns sketch_normal (world).
+Keeps the SolidWorks default tree name (features are never renamed); the response returns it. Create a 2D sketch from lines, arcs, circles and slots (start/end centers + width) on a reference plane (zero-based tree order: 0 Front, 1 Top, 2 Right, then planes made with sw_ref_plane) OR planar face reference. Coordinates are mm in local sketch XY, not world XY. Default fix_geometry=false leaves ordinary editable geometry; true adds fixed constraints, not driving dimensions. dimension=true instead FULLY DEFINES the sketch with relations and driving dimensions to the origin (SolidWorks Fully Define Sketch) without moving anything, and v3.20 puts them in order (horizontal ones in rows under the sketch, vertical ones in columns to its left, the shortest nearest, none on top of another; radii and diameters just outside their arc; dimension_order says how many moved), so drawings get complete dimensions via sw_drawing_annotate and sw_set_dimension can change sizes later; if dimensioning fails (sketch moved or not fully defined) the new sketch is deleted and the error says so. Put the part origin at a corner or center of the profile for clean drawing dimensions (they are measured from the origin). dimension and fix_geometry are exclusive. fillets rounds corners and chamfers bevels them (distance, distance+distance2 or distance+angle_deg) at the point where two segments meet (local mm). Returns sketch_normal (world).
 
 | Option | Type / values | Required | Notes |
 |---|---|---|---|
@@ -445,12 +445,15 @@ Keeps the SolidWorks default tree name (features are never renamed); the respons
 
 ### `sw_mirror`
 
-Keeps the SolidWorks default tree name (features are never renamed); the response returns it. Mirror named features of a managed part about a reference plane (plane_index: 0 Front, 1 Top, 2 Right, then created planes). Unsaved until sw_save.
+Keeps the SolidWorks default tree name (features are never renamed); the response returns it. Mirror named features of a managed part about a reference plane (plane_index: 0 Front, 1 Top, 2 Right, then created planes), or v3.20 whole bodies, solid or surface (body_points_mm: a point on a face of each; merge joins solids that touch the plane, knit joins surfaces). Unsaved until sw_save.
 
 | Option | Type / values | Required | Notes |
 |---|---|---|---|
 | `document_id` | string | yes |  |
-| `features` | array of string | yes |  |
+| `features` | array of string |  |  |
+| `body_points_mm` | array of array of number (>= -100000, <= 100000) (3) |  |  |
+| `merge` | boolean |  |  |
+| `knit` | boolean |  |  |
 | `plane_index` | integer (>= 0, <= 50) | yes |  |
 | `keep_broken` | boolean |  | Keep the result even if it breaks other features/mates (default: it is undone automatically and verified). sw_save then refuses to save until fixed. |
 
@@ -1576,6 +1579,55 @@ v3.11 Record what this session does and turn it into a recipe the next chat can 
 | `overwrite` | boolean |  |  |
 | `keep_recording` | boolean |  |  |
 | `restart` | boolean |  |  |
+
+### `sw_surface`
+
+v3.19 The Surfaces tab (Superficies), one action per call, on a managed part; points are part mm and pick the face (0.05 mm), edge (0.5 mm) or surface body they lie on. Make: extrude (sketch, depth_mm, mid_plane or depth2_mm, reverse, cap_ends; v3.20 end up_to_surface or offset_from_surface stops at the face through up_to_point_mm, offset_mm and offset_reverse for the offset), revolve (sketch with ONE construction line, angle_deg), planar (closed sketch, inner loops make holes, or edge_points_mm), loft (profiles, guides, closed), sweep (profile, path, guides), offset (face_points_mm, distance_mm; 0 copies the face), ruled (edge_points_mm, distance_mm, ruled_type, angle_deg), fill (edge_points_mm of a closed boundary, form_solid, knit). Edit: trim (keep_points_mm on each piece to keep; tool_points_mm, tool_sketch or tool_plane_index, or mutual=true; target_points_mm optional), untrim (face_point_mm), extend (edge_points_mm, distance_mm, linear), knit (body_points_mm or all surfaces, form_solid, gap_tolerance_mm), delete_face (face_points_mm, mode delete\|patch\|fill\|fill_tangent), delete_hole (edge_points_mm, one edge of each hole), replace_face (face_points_mm to replace, body_point_mm of the new surface). Solid: thicken and thicken_cut (body_point_mm, thickness_mm, side side1\|side2\|both, fill_volume), cut_with_surface (body_point_mm, reverse keeps the other side). inspect (read only) lists every surface body with its area and OPEN edges (where they are): a gap that keeps a knit from forming a solid shows there first. mode (on=true\|false) turns surfaces-only on for this document: until it is turned off, tools of the Features tab (extrude, cut, revolve, loft, sweep, boundary, shell, chamfer, patterns, mirror, hole wizard, rib, draft, dome, wrap, combine, part_build...) refuse it; sketches, reference geometry, curves, sw_fillet (Redondeo is also in the Surfaces tab), material, mass and save still work. A trim lists WARNING when a target came out whole; a closed full-circle surface (a hole wall) does not trim through the API: knit without it and make that hole with thicken_cut of a planar disk. A knit with form_solid that leaves no solid is an error that lists the open edges. Unsaved until sw_save.
+
+| Option | Type / values | Required | Notes |
+|---|---|---|---|
+| `document_id` | string | yes |  |
+| `action` | `extrude` \\| `revolve` \\| `planar` \\| `loft` \\| `sweep` \\| `offset` \\| `ruled` \\| `fill` \\| `trim` \\| `untrim` \\| `extend` \\| `knit` \\| `delete_face` \\| `delete_hole` \\| `replace_face` \\| `thicken` \\| `thicken_cut` \\| `cut_with_surface` \\| `inspect` \\| `mode` | yes |  |
+| `on` | boolean |  |  |
+| `sketch` | string |  |  |
+| `profile` | string |  |  |
+| `path` | string |  |  |
+| `profiles` | array of string |  |  |
+| `guides` | array of string |  |  |
+| `depth_mm` | number (> 0, <= 10000) |  |  |
+| `depth2_mm` | number (> 0, <= 10000) |  |  |
+| `mid_plane` | boolean |  |  |
+| `reverse` | boolean |  |  |
+| `cap_ends` | boolean |  |  |
+| `end` | `blind` \\| `mid_plane` \\| `up_to_surface` \\| `offset_from_surface` |  |  |
+| `up_to_point_mm` | array of number (>= -100000, <= 100000) (3) |  |  |
+| `offset_mm` | number (>= 0, <= 10000) |  |  |
+| `offset_reverse` | boolean |  |  |
+| `closed` | boolean |  |  |
+| `angle_deg` | number (>= -360, <= 360) |  |  |
+| `distance_mm` | number (>= 0, <= 10000) |  |  |
+| `thickness_mm` | number (>= 0, <= 10000) |  |  |
+| `side` | `side1` \\| `side2` \\| `both` |  |  |
+| `fill_volume` | boolean |  |  |
+| `form_solid` | boolean |  |  |
+| `knit` | boolean |  |  |
+| `merge_faces` | boolean |  |  |
+| `gap_tolerance_mm` | number (>= 0, <= 10) |  |  |
+| `linear` | boolean |  |  |
+| `mode` | `delete` \\| `patch` \\| `fill` \\| `fill_tangent` |  |  |
+| `ruled_type` | `tangent` \\| `normal` \\| `tapered` \\| `perpendicular` \\| `sweep` |  |  |
+| `mutual` | boolean |  |  |
+| `tool_sketch` | string |  |  |
+| `tool_plane_index` | integer (>= 0, <= 50) |  |  |
+| `face_point_mm` | array of number (>= -100000, <= 100000) (3) |  |  |
+| `body_point_mm` | array of number (>= -100000, <= 100000) (3) |  |  |
+| `face_points_mm` | array of array of number (>= -100000, <= 100000) (3) |  |  |
+| `edge_points_mm` | array of array of number (>= -100000, <= 100000) (3) |  |  |
+| `body_points_mm` | array of array of number (>= -100000, <= 100000) (3) |  |  |
+| `keep_points_mm` | array of array of number (>= -100000, <= 100000) (3) |  |  |
+| `tool_points_mm` | array of array of number (>= -100000, <= 100000) (3) |  |  |
+| `target_points_mm` | array of array of number (>= -100000, <= 100000) (3) |  |  |
+| `keep_broken` | boolean |  | Keep the result even if it breaks other features/mates (default: it is undone automatically and verified). sw_save then refuses to save until fixed. |
 
 ### `sw_topology` (read-only)
 
