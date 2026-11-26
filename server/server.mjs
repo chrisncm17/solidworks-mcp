@@ -152,7 +152,7 @@ async function handleCall(request, extra) {
     const { compactWorkerResponse } = await import('./compact.mjs');
     const response = compactWorkerResponse(raw, GENERATED, tool.operation);
     const content = [{ type: 'text', text: JSON.stringify(response) }];
-    if (response.ok && tool.operation === 'preview') for (const p of response.result.paths ?? [response.result.path]) content.push({ type: 'image', mimeType: 'image/png', data: (await readFile(p)).toString('base64') });
+    if (response.ok && ['preview', 'iso_check'].includes(tool.operation)) for (const p of response.result.paths ?? [response.result.path]) content.push({ type: 'image', mimeType: 'image/png', data: (await readFile(p)).toString('base64') });
     // A Pack and Go whose verification failed is an error even though the worker call itself succeeded.
     return { isError: isToolError(tool.operation, response), content };
   } catch (e) { return { isError: true, content: [{ type: 'text', text: e.message }] }; }

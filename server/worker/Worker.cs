@@ -166,7 +166,12 @@ partial class Worker {
  // v2.9: everything that acts on a resolved document; Guarded() (Guard.cs) wraps it with health checks and automatic restore.
  // v3.8 profiling: every response carries worker_ms (whole operation inside the worker) and pre_ms (until the document code)
   static readonly System.Diagnostics.Stopwatch opWatch=new System.Diagnostics.Stopwatch();static long reachMs=-1;static bool fastHold=false;static long[] preSplit=new long[8];
+  // v3.22 documents saved with nothing but looking at them since: SolidWorks can keep the modified flag after a save, a preview
+  // or save_body, and close_document refused them (L bracket, Agarradera3)
+  static readonly HashSet<string> savedClean=new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+  static readonly HashSet<string> ViewOnlyOps=new HashSet<string>{"preview","inspect","iso_check","section_area","topology","geometry","feature_info","find_faces","mass_check","save_body","part_stages","sketch","relations","equations","compare_volume","verify_rebuild","checkpoint","export","part_diff","drawing_dim_geometry","drawing_dim_shapes","drawing_part_hollows","drawing_part_sizes"};
   static object ExecuteOnDoc(string op,Dictionary<string,object>a,IModelDoc2 doc){object extra;if(reachMs<0)reachMs=opWatch.ElapsedMilliseconds;
+  if(op!="save"&&!ViewOnlyOps.Contains(op)&&!(op=="surface"&&a.ContainsKey("action")&&Convert.ToString(a["action"])=="inspect"))try{savedClean.Remove(doc.GetPathName());}catch{}
   if((op=="save"||op=="checkpoint"||op=="pack_and_go"||op=="export")&&recoveryPending.Contains(doc.GetPathName()))throw new Exception("Saving is blocked: this document may not be in a verified state (interference detection, a failed repair or an edit that could not be restored). Close it with sw_close_document (discard_changes=true) and open it again.");
   if(TryParametric(op,a,doc,out extra))return extra;
   if(TryDocumentUnits(op,a,doc,out extra))return extra;
@@ -198,9 +203,14 @@ partial class Worker {
   if(TryDimLayout(op,a,doc,out extra))return extra;
   if(TryCombine(op,a,doc,out extra))return extra;
   if(TryAppearance(op,a,doc,out extra))return extra;
+  if(TryTreeFolder(op,a,doc,out extra))return extra;
   if(TryWrapBoundary(op,a,doc,out extra))return extra;
   if(TryAdvanced(op,a,doc,out extra))return extra;
   if(TrySurface(op,a,doc,out extra))return extra;
+  if(TryIsoCheck(op,a,doc,out extra))return extra;
+  if(TryPartStages(op,a,doc,out extra))return extra;
+  if(TrySketchPicture(op,a,doc,out extra))return extra;
+  if(TrySectionArea(op,a,doc,out extra))return extra;
   if(op=="preview")return Preview(doc,a);
   if(doc.GetType()!=1&&!new[]{"inspect","save","preview","export","checkpoint","compare_volume","set_dimension"}.Contains(op))throw new Exception("This tool requires a managed part, not an assembly or drawing");
   if(TryModel(op,a,doc,out extra))return extra;
@@ -223,6 +233,7 @@ partial class Worker {
    doc.ClearSelection2(true);var f=doc.FeatureManager.InsertScale(0,true,s,s,s);if(f==null)throw new Exception("Scale creation failed");doc.ForceRebuild3(false);return Checked(doc);
   }
   if(op=="save") {bool allowErrors=Flag(a,"allow_errors");if(doc.GetType()==2)doc.EditRebuild3();else doc.ForceRebuild3(false);var hNow=Health(doc);var problems=HealthProblems(hNow);
+   if(doc.GetType()==1&&StageHistory(doc,new Dictionary<string,string>()).All(f=>StageNeutral.Contains(f.GetTypeName2())))problems.RemoveAll(x=>x.StartsWith("Pieza sin cuerpos"));   // v3.22 sketch-only part
    Dictionary<string,object> kb;if(keptBaseline.TryGetValue(doc.GetPathName(),out kb)){var still=HealthRegressions(kb,hNow);if(still.Count==0)keptBaseline.Remove(doc.GetPathName());else problems.AddRange(still.Select(x=>"keep_broken: "+x));}
    if(problems.Count>0&&!allowErrors)throw new Exception("No se guarda: "+string.Join("; ",problems));object refsSaved=null;
    if(doc.GetType()==2&&a.ContainsKey("include_references")&&Convert.ToBoolean(a["include_references"])){
@@ -237,7 +248,7 @@ partial class Worker {
     object backup=outside.Count>0?BackupFiles(doc.GetPathName(),outside,new List<string>(),"refs"):null;
     var saved=new List<string>();foreach(var kv in dirty){int e1=0,w1=0;if(!kv.Value.Save3(1,ref e1,ref w1)||e1!=0)throw new Exception("Save failed for reference "+kv.Key+" ("+e1+"); saved so far: "+string.Join(", ",saved));saved.Add(Path.GetFileName(kv.Key));if(DiskRestore().Remove(kv.Key))SaveDiskRestore();}
     refsSaved=new{saved=saved.ToArray(),backup=backup};}
-   int e=0,w=0;bool ok=doc.Save3(1,ref e,ref w);if(!ok||e!=0)throw new Exception("Save failed "+e);if(DiskRestore().Remove(doc.GetPathName()))SaveDiskRestore();keptBaseline.Remove(doc.GetPathName());return new{path=doc.GetPathName(),warnings=w,references=refsSaved,saved_with_problems=problems.ToArray(),inspection=Inspect(doc)};}
+   int e=0,w=0;bool ok=doc.Save3(1,ref e,ref w);if(!ok||e!=0)throw new Exception("Save failed "+e);savedClean.Add(doc.GetPathName());if(DiskRestore().Remove(doc.GetPathName()))SaveDiskRestore();keptBaseline.Remove(doc.GetPathName());return new{path=doc.GetPathName(),warnings=w,references=refsSaved,saved_with_problems=problems.ToArray(),inspection=Inspect(doc)};}
   throw new Exception("Unknown operation: "+op);
  }
  // v3.11: every open document the assembly/drawing depends on (all levels) that SolidWorks marks modified. Components only gave the

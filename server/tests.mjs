@@ -2849,3 +2849,112 @@ test('v3.18 a call waiting behind a long one says so, and a call the client canc
   const cancelled = await answerInTime(later(40), { tool: 'sw_cancelada', late: () => [], withinMs: 5, signal: stop.signal });
   assert.equal(JSON.parse(cancelled.content[0].text).result, 'hecho');
 });
+test('v3.21 surfaces: long lofts with tangency, join, closed 3D sketch, ellipse, delete keeping sketches, clean previews', async () => {
+  const ok = (n, a) => assert.equal(validate.get(n)(a), true, n + ' ' + JSON.stringify(a)), no = (n, a) => assert.equal(validate.get(n)(a), false, n + ' ' + JSON.stringify(a));
+  const many = Array.from({ length: 19 }, (_, i) => 'Croquis3D' + (i + 1));
+  ok('sw_surface', { document_id: 'x', action: 'loft', profiles: many, start_tangency: 'normal', end_tangency: 'none' });
+  no('sw_surface', { document_id: 'x', action: 'loft', profiles: many, start_tangency: 'tangent' });
+  no('sw_surface', { document_id: 'x', action: 'loft', profiles: Array.from({ length: 51 }, (_, i) => 'S' + i) });
+  ok('sw_surface', { document_id: 'x', action: 'join', face_point_mm: [-100, 0, 4] });
+  ok('sw_surface', { document_id: 'x', action: 'join', face_point_mm: [-100, 0, 4], size_mm: 2, thickness_mm: 0.5 });
+  no('sw_surface', { document_id: 'x', action: 'join', face_point_mm: [-100, 0, 4], size_mm: 0 });
+  ok('sw_sketch_3d', { document_id: 'x', points_mm: [[0, 0, 0], [10, 0, 5], [5, 5, 5]], type: 'spline', closed: true });
+  ok('sw_create_sketch', { document_id: 'x', plane_index: 0, entities: [{ kind: 'ellipse', center_mm: [0, 0], radius_x_mm: 5, radius_y_mm: 7.5, angle_deg: 30 }] });
+  no('sw_create_sketch', { document_id: 'x', plane_index: 0, entities: [{ kind: 'ellipse', center_mm: [0, 0], radius_x_mm: 5 }] });
+  ok('sw_delete_feature', { document_id: 'x', name: 'Superficie-Recubrir1', keep_sketches: true });
+  ok('sw_delete_feature', { document_id: 'x', name: 'Superficie-Recubrir1' }); no('sw_delete_feature', { document_id: 'x' });
+  ok('sw_preview', { document_id: 'x', views: ['iso'], hide_surfaces: true, hide_bodies: ['Superficie-Plano7'], show_references: false });
+  no('sw_preview', { document_id: 'x', hide_bodies: [] });
+});
+
+test('v3.22 iso_check, part_stages, part_build expect.iso, preview show_dimensions', async () => {
+  const ok = (n, a) => assert.equal(validate.get(n)(a), true, n + ' ' + JSON.stringify(a)), no = (n, a) => assert.equal(validate.get(n)(a), false, n + ' ' + JSON.stringify(a));
+  ok('sw_iso_check', { document_id: 'x', image_path: 'C:\\p\\plano.png' });
+  ok('sw_iso_check', { document_id: 'x', image_path: 'C:\\p\\plano.png', region_px: [10, 20, 400, 300], line_threshold: 90 });
+  no('sw_iso_check', { document_id: 'x' }); no('sw_iso_check', { document_id: 'x', image_path: 'C:\\p\\plano.png', region_px: [1, 2, 3] });
+  ok('sw_part_stages', { document_id: 'x' });
+  ok('sw_part_stages', { document_id: 'x', stages: [{ name: 'base', until: 'Saliente-Extruir1' }, { name: 'final' }], base_name: 'Escuadra', copy_to: 'C:\\Users\\x\\Downloads\\Escuadra' });
+  no('sw_part_stages', { document_id: 'x', stages: [] }); no('sw_part_stages', { document_id: 'x', stages: [{ until: 'Croquis1' }] });
+  no('sw_part_stages', { document_id: 'x', stages: [{ name: 'a/b' }] });
+  ok('sw_preview', { document_id: 'x', views: ['front'], show_references: true, show_dimensions: true });
+  const { partBuild } = await import('./part_ir.mjs');
+  const ir = { ir: 'part-ir/1', part: 'E', units: 'mm', params: {}, features: [{ id: 'b', op: 'extrude', sketch: { plane: 'front', entities: [{ rect: { from: [0, 0], to: [10, 10] } }] }, depth: 5 }] };
+  assert.equal((await partBuild({ action: 'check', ir: { ...ir, expect: { iso: { image_path: 'C:\\p\\a.png', region_px: [0, 0, 100, 100] } } } }, {})).ok, true);
+  assert.equal((await partBuild({ action: 'check', ir: { ...ir, expect: { iso: { region_px: [0, 0, 100, 100] } } } }, {})).ok, false);
+});
+
+test('v3.22 create_sketch dimension_style and IR dimension_style', () => {
+  const sk = validate.get('sw_create_sketch'), e = [{ kind: 'line', start_mm: [0, 0], end_mm: [10, 5] }];
+  assert.equal(sk({ document_id: 'a', plane_index: 0, entities: e, dimension: true, dimension_style: 'drawing' }), true);
+  assert.equal(sk({ document_id: 'a', plane_index: 0, entities: e, dimension: true, dimension_style: 'baseline' }), true);
+  assert.equal(sk({ document_id: 'a', plane_index: 0, entities: e, dimension: true, dimension_style: 'ordinate' }), false);
+  assert.deepEqual(resolveIR({ ...placa, dimension_style: 'drawing' }).errors, []);
+  assert.match(resolveIR({ ...placa, dimension_style: 'iso' }).errors.join(), /dimension_style/);
+});
+test('v3.22 sw_surface boundary, flatten, radiate, mid_surface and freeform', () => {
+  const v = validate.get('sw_surface'), ok = (a) => assert.equal(v({ document_id: 'a', ...a }), true, JSON.stringify(a)), no = (a) => assert.equal(v({ document_id: 'a', ...a }), false, JSON.stringify(a));
+  ok({ action: 'boundary', profiles: ['Croquis1', 'Croquis2'] }); ok({ action: 'boundary', edge_points_mm: [[0, 0, 0], [0, 0, 40]] });
+  ok({ action: 'flatten', face_points_mm: [[10, 0, 20]], tears: true, accuracy: 5 }); no({ action: 'flatten', accuracy: 0 });
+  ok({ action: 'radiate', edge_points_mm: [[0, 0, 0]], tool_plane_index: 1, distance_mm: 10, tangent_propagate: true });
+  ok({ action: 'mid_surface', face_points_mm: [[0, 0, 0], [0, 0, 10]], position: 0.5 }); no({ action: 'mid_surface', position: 2 });
+  ok({ action: 'freeform', face_point_mm: [0, 0, 0], freeform_curves: [{ direction: 0, at: 0.5, points: [{ at: 0.5, offset_mm: [0, 0, 5] }] }] });
+  no({ action: 'freeform', face_point_mm: [0, 0, 0], freeform_curves: [{ direction: 2, at: 0.5 }] });
+  ok({ action: 'ruled', edge_points_mm: [[20, 0, 0]], ruled_type: 'tangent', distance_mm: 10 }); ok({ action: 'radiate', edge_points_mm: [[20, 0, 0]], tool_plane_index: 0, distance_mm: 10, reverse: true });
+  const b = tools.find(t => t.name === 'sw_boundary').description; assert.doesNotMatch(b, /EXPERIMENTAL/); assert.match(b, /loft cut/);
+  const s = tools.find(t => t.name === 'sw_surface').description; assert.match(s, /mark 4/); assert.match(s, /tube rim/); assert.match(s, /trim each other/); assert.match(s, /offset of the first face/); assert.match(s, /planar surface\)/);
+});
+test('v3.23 sw_surface curves: through points, composite and projected validate', () => {
+  const ok = (a) => assert.equal(validate.get('sw_surface')({ document_id: 'a', ...a }), true, JSON.stringify(a)), no = (a) => assert.equal(validate.get('sw_surface')({ document_id: 'a', ...a }), false, JSON.stringify(a));
+  ok({ action: 'curve_points', points_mm: [[0, 0, 0], [10, 5, 3], [20, 0, 8]], closed: false });
+  ok({ action: 'curve_composite', curves: ['Croquis1', 'Croquis2'], edge_points_mm: [[0, 0, 10]] });
+  ok({ action: 'curve_projected', sketch: 'Croquis3', face_points_mm: [[0, 10, 0]], reverse: true }); ok({ action: 'curve_projected', sketch: 'Croquis3', onto_sketch: 'Croquis4' });
+  no({ action: 'curve_points', points_mm: [[0, 0]] }); no({ action: 'curve_composite', curves: [] });
+  const s = tools.find(t => t.name === 'sw_surface').description; assert.match(s, /Curva proyectada/); assert.match(s, /path of a sweep/);
+});
+test('v3.22 create_part name without extension, never an assembly or drawing name', () => {
+  const ok = (a) => assert.equal(validate.get('sw_create_part')(a), true, JSON.stringify(a)), no = (a) => assert.equal(validate.get('sw_create_part')(a), false, JSON.stringify(a));
+  ok({ name: 'Agarradera3', template: 'C:\t\Pieza.PRTDOT' }); ok({ name: 'a.SLDPRT', template: 'C:\t\Pieza.PRTDOT' });
+  no({ name: 'a.sldasm', template: 'C:\t\Pieza.PRTDOT' }); no({ name: 'a.SLDDRW', template: 'C:\t\Pieza.PRTDOT' }); no({ name: 'a/b', template: 'C:\t\Pieza.PRTDOT' });
+});
+
+test('v3.24 sketch_picture, loft_check and guides from segments, section_area', () => {
+  const ok = (n, a) => { assert.equal(validate.get(n)(a), true, n + ' ' + JSON.stringify(validate.get(n).errors)); assert.equal(argumentError(n.slice(3), a), null, JSON.stringify(a)); };
+  const no = (n, a) => assert.ok(!validate.get(n)(a) || argumentError(n.slice(3), a) !== null, n + ' should refuse ' + JSON.stringify(a));
+  const img = 'C:\\p\\tempest side.png';
+  ok('sw_sketch_picture', { document_id: 'x', image_path: img, scale_ref: { px_a: [10, 20], px_b: [400, 20], distance_mm: 10260 } });
+  ok('sw_sketch_picture', { document_id: 'x', image_path: img, plane_index: 1, crop_px: [0, 200, 454, 420], flip_x: true, rotate_deg: 90, mm_per_px: 22.6, anchor: { px: [12, 300], at_mm: [0, 0] }, trace_columns: 120, px_to_mm: [[1, 2]], transparency: 0.5 });
+  no('sw_sketch_picture', { document_id: 'x', image_path: img });
+  no('sw_sketch_picture', { document_id: 'x', image_path: img, mm_per_px: 2, width_mm: 300 });
+  no('sw_sketch_picture', { document_id: 'x', image_path: 'C:\\p\\plano.pdf', mm_per_px: 2 });
+  no('sw_sketch_picture', { document_id: 'x', image_path: img, mm_per_px: 2, crop_px: [100, 0, 50, 10] });
+  no('sw_sketch_picture', { document_id: 'x', image_path: img, mm_per_px: 2, rotate_deg: 45 });
+  ok('sw_surface', { document_id: 'x', action: 'loft_check', profiles: ['Croquis2', 'Croquis3'], guides: ['Croquis4', { sketch: 'Croquis1', segments: [0, 1, 2] }] });
+  ok('sw_surface', { document_id: 'x', action: 'loft', profiles: ['Croquis2', 'Croquis3'], guides: [{ sketch: 'Croquis1', segments: [3] }] });
+  no('sw_surface', { document_id: 'x', action: 'loft_check', profiles: ['Croquis2', 'Croquis3'] });
+  no('sw_surface', { document_id: 'x', action: 'loft', profiles: ['a', 'b'], guides: [{ sketch: 'Croquis1', segments: [] }] });
+  no('sw_surface', { document_id: 'x', action: 'boundary', profiles: ['a', 'b'], guides: [{ sketch: 'Croquis1', segments: [1] }] });
+  ok('sw_section_area', { document_id: 'x', sections: [{ plane_index: 1, origin_mm: [-50, -175, 0], size_mm: 70 }, { name: 'radial', origin_mm: [0, 0, 0], normal: [1, 1, 0] }] });
+  no('sw_section_area', { document_id: 'x', sections: [{ origin_mm: [0, 0, 0] }] });
+  no('sw_section_area', { document_id: 'x', sections: [] });
+  assert.equal(tools.find(t => t.name === 'sw_section_area').annotations.readOnlyHint, true);
+});
+
+test('v3.25 tree_folder and face colors; v3.26 split line by intersection, hide and show surface bodies', () => {
+  const ok = (n, a) => { assert.equal(validate.get(n)(a), true, n + ' ' + JSON.stringify(validate.get(n).errors)); assert.equal(argumentError(n.slice(3), a), null, JSON.stringify(a)); };
+  const no = (n, a) => assert.ok(!validate.get(n)(a) || argumentError(n.slice(3), a) !== null, n + ' should refuse ' + JSON.stringify(a));
+  ok('sw_tree_folder', { document_id: 'x', features: ['Plano1', 'Plano2'] });
+  no('sw_tree_folder', { document_id: 'x', features: [] });
+  ok('sw_appearance', { document_id: 'x', list_faces: true, probe_mm: [6900, -900, 300] });
+  no('sw_appearance', { document_id: 'x', list_faces: true, probe_mm: [6900, -900] });
+  ok('sw_split_line', { document_id: 'x', sketch: 'S', face_points_mm: [[0, 0, 1]], single_direction: true, reverse: true });
+  ok('sw_split_line', { document_id: 'x', tool_points_mm: [[7900, -900, 0], [8357, -900, 0]], face_points_mm: [[8000, -900, 300]], hide_tools: true });
+  ok('sw_split_line', { document_id: 'x', tool_plane_index: 4, face_points_mm: [[8000, -900, 300]] });
+  ok('sw_split_line', { document_id: 'x', sketch: 'S', face_points_mm: Array.from({ length: 150 }, (_, i) => [i, 0, 1]) });
+  assert.match(argumentError('split_line', { document_id: 'x', face_points_mm: [[0, 0, 1]] }), /one of the two/);
+  assert.match(argumentError('split_line', { document_id: 'x', sketch: 'S', tool_points_mm: [[0, 0, 0]], face_points_mm: [[0, 0, 1]] }), /one of the two/);
+  no('sw_split_line', { document_id: 'x', sketch: 'S', face_points_mm: [[0, 0, 1]], hide_tools: true });
+  no('sw_split_line', { document_id: 'x', tool_points_mm: [[0, 0, 0]], face_points_mm: [[0, 0, 1]], single_direction: true });
+  ok('sw_surface', { document_id: 'x', action: 'hide', body_points_mm: [[7900, -900, 0]] });
+  ok('sw_surface', { document_id: 'x', action: 'show', body_points_mm: [[7900, -900, 0], [8357, -900, 0]] });
+  no('sw_surface', { document_id: 'x', action: 'hide' });
+});

@@ -32,6 +32,22 @@ partial class Worker {
   var faces=label?PreviewFaces(doc,a.ContainsKey("max_labels")?Convert.ToInt32(a["max_labels"]):40):null;
   var paths=new List<string>();var seen=new Dictionary<int,List<string>>();var warnings=new List<string>();
   var mv=(IModelView)doc.ActiveView;
+  // v3.21 planes, sketches, axes and origins are hidden while the pictures are taken (show_references keeps them), and
+  // hide_bodies (body names) or hide_surfaces (every surface body) hide bodies just for the pictures; all is put back after
+  bool showRefs=Flag(a,"show_references");int hideAll=(int)swUserPreferenceToggle_e.swViewDisplayHideAllTypes;bool hadHideAll=doc.GetUserPreferenceToggle(hideAll);
+  bool wasDirty=doc.GetSaveFlag();var hidden=new List<IBody2>();
+  bool showDims=Flag(a,"show_dimensions");var dimToggles=new[]{(int)swUserPreferenceToggle_e.swDisplayAnnotations,(int)swUserPreferenceToggle_e.swDisplayFeatureDimensions};var dimWas=new Dictionary<int,bool>();
+  try{
+  if(!showRefs&&!hadHideAll)doc.SetUserPreferenceToggle(hideAll,true);
+  // v3.22 show_dimensions: sketch and feature dimensions drawn in the pictures (to check how they are laid out)
+  if(showDims){foreach(var t in dimToggles){dimWas[t]=doc.GetUserPreferenceToggle(t);doc.SetUserPreferenceToggle(t,true);}doc.GraphicsRedraw2();}
+  if(doc.GetType()==1){
+   var want=a.ContainsKey("hide_bodies")?Items(a["hide_bodies"]).Select(Convert.ToString).ToList():new List<string>();
+   var all=((object[])((IPartDoc)doc).GetBodies2((int)swBodyType_e.swAllBodies,true)??new object[0]).Cast<IBody2>().ToList();
+   foreach(var w in want)if(!all.Any(b=>b.Name==w))throw new Exception("No visible body "+w+" (bodies: "+string.Join(", ",all.Select(b=>b.Name))+")");
+   foreach(var b in all)if(want.Contains(b.Name)||(Flag(a,"hide_surfaces")&&b.GetType()==(int)swBodyType_e.swSheetBody)){b.HideBody(true);hidden.Add(b);}
+   if(hidden.Count>0)doc.GraphicsRedraw2();
+  }
   foreach(var n in names){
    doc.ShowNamedView2("",PreviewViewIds[n]);doc.ViewZoomtofit2();string png=SaveViewPng(doc);
    // the minimized MCP window can fit the model to a frame other than the picture: zoom out and retake while it is cut off
@@ -42,6 +58,13 @@ partial class Worker {
    if(mv!=null&&mv.HasPerspective()){warnings.Add(n+": perspective view, no labels");continue;}
    string w=LabelPng(png,faces,(MathTransform)mv.Orientation3,n,seen);if(w!=null)warnings.Add(w);
   }
+  }finally{
+   foreach(var b in hidden)try{b.HideBody(false);}catch{}
+   foreach(var kv in dimWas)try{doc.SetUserPreferenceToggle(kv.Key,kv.Value);}catch{}
+   try{if(!showRefs&&!hadHideAll)doc.SetUserPreferenceToggle(hideAll,false);}catch{}
+   if(hidden.Count>0||!showRefs)try{doc.GraphicsRedraw2();}catch{}
+  }
+  if(!wasDirty&&doc.GetSaveFlag())warnings.Add("hiding for the pictures marked the document as changed; nothing was modified");
   object legend=faces==null?null:faces.Select(f=>{var p=AnchorPoint(f);return new{label=f.Label,kind=f.Kind,area_mm2=Math.Round(f.Area*1e6,2),diameter_mm=f.Diameter,
    point_mm=p==null?null:p.Select(x=>Math.Round(x*1000,3)).ToArray(),visible_in=seen.ContainsKey(f.Label)?seen[f.Label].ToArray():new string[0]};}).ToArray();
   return new{path=paths[0],paths=paths.ToArray(),views=names,faces=legend,warnings=warnings.ToArray()};

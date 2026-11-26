@@ -64,8 +64,12 @@ partial class Worker {
    bool bodies=a.ContainsKey("body_points_mm");
    if(bodies)foreach(var p in Pts(a,"body_points_mm"))Mark(d,AnyFaceAt(d,p,"body_points_mm").GetBody(),256,"body");else SelectFeatures(d,a,1);
    if(!PlaneByIndex(d,Convert.ToInt32(a["plane_index"])).Select2(true,2))throw new Exception("Plane selection failed");
+   double v0=PartVolumeMm3(d);
    var f=(IFeature)d.FeatureManager.InsertMirrorFeature2(bodies,false,bodies&&Flag(a,"merge"),bodies&&Flag(a,"knit"),(int)swFeatureScope_e.swFeatureScope_AllBodies);
-   if(f==null)throw new Exception("Mirror failed"+(bodies?": each point must lie on a body face, and merge needs solids that touch the plane":""));Rename(f,name);result=new{feature=f.Name,inspection=Checked(d)};return true;
+   if(f==null)throw new Exception("Mirror failed"+(bodies?": each point must lie on a body face, and merge needs solids that touch the plane":""));Rename(f,name);
+   // v3.22 a feature mirror whose copy does not touch the body adds nothing and SolidWorks says nothing (Ala del Bonanza): say it
+   double v1=PartVolumeMm3(d);string warn=v0>0&&v1>=0&&Math.Abs(v1-v0)<=Math.Max(1e-3,v0*1e-7)?"WARNING: the mirror changed no volume ("+v0+" mm3 before and after): a mirrored feature that does not touch the body is not added; mirror the body (body_points_mm) or check the plane":null;
+   result=new{feature=f.Name,volume_before_mm3=v0,volume_after_mm3=v1,warning=warn,inspection=Checked(d)};return true;
   }
   if(op=="circular_pattern"){
    string name=NewName(d,a);int n=Convert.ToInt32(a["count"]);double total=(a.ContainsKey("angle_deg")?Num(a,"angle_deg"):360)*Math.PI/180;

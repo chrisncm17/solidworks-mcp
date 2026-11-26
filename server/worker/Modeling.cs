@@ -24,11 +24,12 @@ partial class Worker {
  }
  // Add relations + driving dimensions to the origin (SolidWorks "Fully Define Sketch"), keeping the geometry where it is.
  // Must run with the sketch ACTIVE. Fails (and removes nothing it cannot verify) if the sketch moved or is not fully defined.
- static object FullyDefine(IModelDoc2 d,ISketch sketch,IFeature sf){
-  var before=SketchGeometry(sketch);
+ static object FullyDefine(IModelDoc2 d,ISketch sketch,IFeature sf,bool drawing=false){
+  var before=SketchGeometry(sketch);object drawingDims=null;drawingAdded.Clear();var drawingDropped=new List<string>();
   bool prompt=sw.GetUserPreferenceToggle((int)swUserPreferenceToggle_e.swInputDimValOnCreate);int status;
   try{
    sw.SetUserPreferenceToggle((int)swUserPreferenceToggle_e.swInputDimValOnCreate,false);d.ClearSelection2(true);
+   if(drawing)drawingDims=AddDrawingDims(d,sketch);   // v3.22 inclined lines: length and angle first
    int rel=(int)(swSketchFullyDefineRelationType_e.swSketchFullyDefineRelationType_Horizontal|swSketchFullyDefineRelationType_e.swSketchFullyDefineRelationType_Vertical|swSketchFullyDefineRelationType_e.swSketchFullyDefineRelationType_Tangent|swSketchFullyDefineRelationType_e.swSketchFullyDefineRelationType_Concentric|swSketchFullyDefineRelationType_e.swSketchFullyDefineRelationType_Coincident);
    // datum = a sketch point ON the part origin (FullyDefineSketch needs a datum inside the active sketch; otherwise it only adds sizes)
    var of=AllFeatures(d).FirstOrDefault(x=>x.GetTypeName2()=="OriginProfileFeature");string on=of==null?"Origin":of.Name;
@@ -39,6 +40,13 @@ partial class Worker {
    int relBefore=((object[])sketch.RelationManager.GetRelations(0)??new object[0]).Length;d.SketchAddConstraints("sgCOINCIDENT");d.ClearSelection2(true);
    if(((object[])sketch.RelationManager.GetRelations(0)??new object[0]).Length<=relBefore)throw new Exception("The datum point could not be tied to the part origin");
    status=d.SketchManager.FullyDefineSketch(true,true,rel,true,(int)swAutodimScheme_e.swAutodimSchemeBaseline,origin,(int)swAutodimScheme_e.swAutodimSchemeBaseline,origin,(int)swAutodimHorizontalPlacement_e.swAutodimHorizontalPlacementBelow,(int)swAutodimVerticalPlacement_e.swAutodimVerticalPlacementLeft);
+   // v3.22 drawing style: when the lengths and angles added first leave Fully Define unable to finish (both sides of a trapezoid with
+   // length and angle fix its top line, and the horizontal relation it wants would over-define it), angles then lengths go back one by one
+   if(drawing&&sketch.GetConstrainedStatus()!=(int)swConstrainedStatus_e.swFullyConstrained){
+    var back=drawingAdded.Where(t=>t.Item1=="angle").Reverse().Concat(drawingAdded.Where(t=>t.Item1=="length").Reverse()).ToList();
+    foreach(var t in back){if(sketch.GetConstrainedStatus()==(int)swConstrainedStatus_e.swFullyConstrained)break;
+     d.ClearSelection2(true);try{((IAnnotation)t.Item2.GetAnnotation()).Select3(false,null);d.EditDelete();drawingDropped.Add(t.Item3);}catch{}d.ClearSelection2(true);
+     status=d.SketchManager.FullyDefineSketch(true,true,rel,true,(int)swAutodimScheme_e.swAutodimSchemeBaseline,origin,(int)swAutodimScheme_e.swAutodimSchemeBaseline,origin,(int)swAutodimHorizontalPlacement_e.swAutodimHorizontalPlacementBelow,(int)swAutodimVerticalPlacement_e.swAutodimVerticalPlacementLeft);}}
   }finally{sw.SetUserPreferenceToggle((int)swUserPreferenceToggle_e.swInputDimValOnCreate,prompt);d.ClearSelection2(true);}
   if(status!=(int)swAutodimStatus_e.swAutodimStatusSuccess)throw new Exception("Fully define sketch failed: "+((swAutodimStatus_e)status));
   var after=SketchGeometry(sketch);double moved=before.Count!=after.Count?double.PositiveInfinity:before.Zip(after,(x,y)=>Math.Abs(x-y)).DefaultIfEmpty(0).Max();
@@ -46,7 +54,7 @@ partial class Worker {
   int n=0;var dd=(IDisplayDimension)sf.GetFirstDisplayDimension();while(dd!=null&&n<1000){n++;dd=(IDisplayDimension)sf.GetNextDisplayDimension(dd);}
   int cs=sketch.GetConstrainedStatus();
   if(cs!=(int)swConstrainedStatus_e.swFullyConstrained)throw new Exception("Sketch is not fully defined after dimensioning (status "+cs+", "+n+" dimensions, "+((object[])sketch.RelationManager.GetRelations(0)??new object[0]).Length+" relations, active="+(d.SketchManager.ActiveSketch!=null)+")");
-  return new{dimensions_added=n,fully_defined=true,max_geometry_change_mm=Math.Round(moved*1000,9)};
+  return new{dimensions_added=n,fully_defined=true,max_geometry_change_mm=Math.Round(moved*1000,9),drawing_style=drawingDims,drawing_dims_taken_back=drawingDropped.Count>0?drawingDropped:null};
  }
  static IFeature SketchFeature(IModelDoc2 d,string name){var f=Feature(d,name);if(!(f.GetSpecificFeature2() is ISketch))throw new Exception("Not a sketch: "+name);return f;}
  static List<ISketchPoint> SegmentEndpoints(ISketch sk){
@@ -153,7 +161,9 @@ partial class Worker {
    result=new{part_templates=templates,default_part_template=sw.GetUserPreferenceStringValue((int)swUserPreferenceStringValue_e.swDefaultTemplatePart),default_assembly_template=sw.GetUserPreferenceStringValue((int)swUserPreferenceStringValue_e.swDefaultTemplateAssembly),default_drawing_template=sw.GetUserPreferenceStringValue((int)swUserPreferenceStringValue_e.swDefaultTemplateDrawing),material_databases=sw.GetMaterialDatabases(),thread_profiles=ThreadFiles().Select(x=>new{path=x,type=Path.GetFileNameWithoutExtension(x),sizes=sw.GetConfigurationNames(x)}).ToArray(),managed_parts=Directory.GetFiles(Root,"*.sldprt").Select(Path.GetFileName).ToArray()};return true;
   }
   if(op=="create_part"){
-   string path=ManagedPath(Str(a,"name"));if(File.Exists(path))throw new Exception("Destination already exists");
+   // v3.22 a name without extension gets .SLDPRT (the Agarradera build was refused for "Agarradera3")
+   string pn=Str(a,"name");if(!pn.EndsWith(".sldprt",StringComparison.OrdinalIgnoreCase))pn+=".SLDPRT";
+   string path=ManagedPath(pn);if(File.Exists(path))throw new Exception("Destination already exists");
    string template=Str(a,"template");if(!Path.IsPathRooted(template)||!File.Exists(template)||!template.EndsWith(".prtdot",StringComparison.OrdinalIgnoreCase))throw new Exception("Existing absolute PRTDOT template required");
    var d=(IModelDoc2)sw.NewDocument(template,0,0,0);if(d==null)throw new Exception("New part failed");lastDoc=d;
    SaveNew(d,path);string id=Guid.NewGuid().ToString("N");owned.Add(id,d);createdHere.Add(id);result=new{document_id=id,inspection=Inspect(d)};return true;
@@ -170,6 +180,17 @@ partial class Worker {
     foreach(IEdge e in (object[])b.GetEdges()??new object[0]){var c=(ICurve)e.GetCurve();var p=(IVertex)e.GetStartVertex();var q=(IVertex)e.GetEndVertex();edges.Add(new{reference=Token(d,e),body=bi,circle=c.IsCircle()?c.CircleParams:null,start_m=p==null?null:p.GetPoint(),end_m=q==null?null:q.GetPoint()});}bi++;
    }
    result=new{faces=faces,edges=edges,usage="References expire after document changes or another sw_topology call. Coordinates are meters."};return true;
+  }
+  if(op=="create_sketch"&&a.ContainsKey("dimension_style")&&Convert.ToString(a["dimension_style"])=="drawing"&&!a.ContainsKey("_drawing_try")){
+   // v3.22 drawing style first; when Fully Define cannot finish after the lengths and angles (seen on a trapezoid and an irregular
+   // hexagon) that sketch is removed by the check below and made again with the baseline dimensions, and the answer says so
+   var a2=new Dictionary<string,object>(a);a2["_drawing_try"]=true;
+   try{return TryModel(op,a2,d,out result);}
+   catch(Exception ex){if(!(ex.Message.StartsWith("Dimensioning failed")&&ex.Message.Contains("was removed")))throw;
+    var a3=new Dictionary<string,object>(a);a3["dimension_style"]="baseline";a3["_drawing_try"]=true;bool okb=TryModel(op,a3,d,out result);
+    object r0=result;var rd=new Dictionary<string,object>();foreach(var pi in r0.GetType().GetProperties())rd[pi.Name]=pi.GetValue(r0,null);
+    rd["dimension_style_note"]="drawing style could not fully define this sketch ("+ex.Message.Replace("Dimensioning failed: ","").Split(';')[0]+"); it was made again with baseline dimensions (horizontal and vertical only)";
+    result=rd;return okb;}
   }
   if(op=="create_sketch"){
    string name=NewName(d,a);d.ClearSelection2(true);
@@ -202,6 +223,13 @@ partial class Worker {
       continue;
      }
      if(kind=="circle"){var c=Items(item["center_mm"]).Select(Convert.ToDouble).ToArray();segment=(ISketchSegment)d.SketchManager.CreateCircleByRadius(c[0]/1000,c[1]/1000,0,Num(item,"radius_mm")/1000);}
+     // v3.21 ellipse: radius_x_mm along local X and radius_y_mm along local Y, both turned angle_deg about the center
+     if(kind=="ellipse"){var c=Items(item["center_mm"]).Select(Convert.ToDouble).ToArray();double rx=Num(item,"radius_x_mm"),ry=Num(item,"radius_y_mm"),an=(item.ContainsKey("angle_deg")?Num(item,"angle_deg"):0)*Math.PI/180;
+      if(Math.Abs(rx-ry)<1e-9)throw new Exception("Ellipse with equal radii: use a circle");
+      double ux=Math.Cos(an),uy=Math.Sin(an),vx=-uy,vy=ux;double[] maj=rx>ry?new[]{c[0]+rx*ux,c[1]+rx*uy}:new[]{c[0]+ry*vx,c[1]+ry*vy},mnr=rx>ry?new[]{c[0]+ry*vx,c[1]+ry*vy}:new[]{c[0]+rx*ux,c[1]+rx*uy};
+      segment=(ISketchSegment)d.SketchManager.CreateEllipse(c[0]/1000,c[1]/1000,0,maj[0]/1000,maj[1]/1000,0,mnr[0]/1000,mnr[1]/1000,0);}
+     // v3.25 spline through points_mm (local mm); closed returns to the first point (a closed spline is a loft profile)
+     if(kind=="spline"){var sp=Items(item["points_mm"]).Select(o=>Items(o).Select(Convert.ToDouble).ToArray()).ToList();if(sp.Count<2)throw new Exception("spline needs at least 2 points");if(Flag(item,"closed")){if(sp.Count<3)throw new Exception("closed spline needs at least 3 points");var s0=sp[0];var sl=sp[sp.Count-1];if(Math.Abs(s0[0]-sl[0])>1e-9||Math.Abs(s0[1]-sl[1])>1e-9)sp.Add(new[]{s0[0],s0[1]});}var flat=sp.SelectMany(p=>new[]{p[0]/1000,p[1]/1000,0.0}).ToArray();segment=(ISketchSegment)d.SketchManager.CreateSpline2(flat,false);}
      if(kind=="line"){var p=Items(item["start_mm"]).Select(Convert.ToDouble).ToArray();var q=Items(item["end_mm"]).Select(Convert.ToDouble).ToArray();if(p.SequenceEqual(q))throw new Exception("Zero-length line");segment=(ISketchSegment)d.SketchManager.CreateLine(p[0]/1000,p[1]/1000,0,q[0]/1000,q[1]/1000,0);}
      if(kind=="arc"){var c=Items(item["center_mm"]).Select(Convert.ToDouble).ToArray();var p=Items(item["start_mm"]).Select(Convert.ToDouble).ToArray();var q=Items(item["end_mm"]).Select(Convert.ToDouble).ToArray();double rp=Math.Sqrt(Math.Pow(p[0]-c[0],2)+Math.Pow(p[1]-c[1],2)),rq=Math.Sqrt(Math.Pow(q[0]-c[0],2)+Math.Pow(q[1]-c[1],2));if(rp<0.000001||Math.Abs(rp-rq)>0.000001||p.SequenceEqual(q))throw new Exception("Arc endpoints must be distinct and equidistant from center");segment=(ISketchSegment)d.SketchManager.CreateArc(c[0]/1000,c[1]/1000,0,p[0]/1000,p[1]/1000,0,q[0]/1000,q[1]/1000,0,(short)(Flag(item,"clockwise")?-1:1));}
      if(segment==null)throw new Exception("Sketch entity creation failed: "+kind);segment.ConstructionGeometry=Flag(item,"construction");
@@ -226,7 +254,7 @@ partial class Worker {
     }
     var contours=(object[])sketch.GetSketchContours()??new object[0];openContours=contours.Cast<ISketchContour>().Count(c=>!c.IsClosed());
     } finally {d.SketchManager.AddToDB=oldDb;}
-    if(Flag(a,"dimension")){try{dimInfo=FullyDefine(d,sketch,sf);dimRef=SketchGeometry(sketch);}catch(Exception ex){dimFail=ex.Message;}}skt[2]=skw.ElapsedMilliseconds;
+    if(Flag(a,"dimension")){try{dimInfo=FullyDefine(d,sketch,sf,a.ContainsKey("dimension_style")&&Str(a,"dimension_style")=="drawing");dimRef=SketchGeometry(sketch);}catch(Exception ex){dimFail=ex.Message;}}skt[2]=skw.ElapsedMilliseconds;
    } finally {try{d.SketchManager.DisplayWhenAdded=gdisp;if(gview!=null)gview.EnableGraphicsUpdate=gupd;}catch{}if(d.SketchManager.ActiveSketch!=null)d.SketchManager.InsertSketch(true);d.ClearSelection2(true);}
    object dimOrder=null;
    if(Flag(a,"dimension")){
@@ -288,9 +316,16 @@ partial class Worker {
    string n=Str(a,"name");var f=Feature(d,n);
    var children=((object[])f.GetChildren()??new object[0]).OfType<IFeature>().Select(x=>x.Name).ToArray();
    if(children.Length>0)throw new Exception("Feature has dependents ("+string.Join(", ",children)+"); delete those first");
+   // v3.21 the absorbed sketches (profiles of a loft, the sketch of an extrude...) go with it unless keep_sketches: the response names them
+   var absorbed=new List<string>();var sub=f.GetFirstSubFeature() as IFeature;
+   while(sub!=null){string tn=sub.GetTypeName2();if(tn=="ProfileFeature"||tn=="3DProfileFeature")absorbed.Add(sub.Name);sub=sub.GetNextSubFeature() as IFeature;}
+   bool keep=Flag(a,"keep_sketches");
    d.ClearSelection2(true);if(!f.Select2(false,0))throw new Exception("Cannot select feature "+n);
-   if(!d.Extension.DeleteSelection2((int)swDeleteSelectionOptions_e.swDelete_Absorbed))throw new Exception("Delete failed (other features may depend on it)");
-   d.ClearSelection2(true);if(((IPartDoc)d).FeatureByName(n)!=null)throw new Exception("Feature still present after delete");d.ForceRebuild3(false);result=Checked(d);return true;
+   if(!d.Extension.DeleteSelection2(keep?0:(int)swDeleteSelectionOptions_e.swDelete_Absorbed))throw new Exception("Delete failed (other features may depend on it)");
+   d.ClearSelection2(true);if(((IPartDoc)d).FeatureByName(n)!=null)throw new Exception("Feature still present after delete");d.ForceRebuild3(false);
+   var left=FeatureNames(d);
+   result=new{deleted=n,deleted_sketches=absorbed.Where(x=>!left.Contains(x)).ToArray(),kept_sketches=absorbed.Where(x=>left.Contains(x)).ToArray(),
+    note=keep?"The sketches were kept: reuse them in a new feature.":absorbed.Count>0?"Its sketches were deleted with it; pass keep_sketches=true to keep them.":null,inspection=Checked(d)};return true;
   }
   if(op=="suppress_feature"){
    var f=Feature(d,Str(a,"name"));bool state=Flag(a,"suppressed");if(!f.SetSuppression2(state?0:1,1,null))throw new Exception("Cannot change feature suppression");result=Checked(d);return true;

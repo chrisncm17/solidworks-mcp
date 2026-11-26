@@ -5,7 +5,7 @@
 // unambiguously from a parameter expression get an equation, so changing "L" in SolidWorks (or with action edit) rebuilds it.
 //  check - validate + resolve, list the steps; touches nothing.   build - create the part.   edit - change parameters of a built
 //  part (global variables), rebuild and re-check the expectations recomputed with the new values.
-import { readFileSync, writeFileSync, existsSync, statSync, mkdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, statSync, mkdirSync, renameSync } from 'node:fs';
 import { join, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
@@ -68,6 +68,7 @@ export function resolveIR(ir) {
   if (ir?.ir !== IR_VERSION) errors.push(`ir: debe ser "${IR_VERSION}"`);
   if (!ir?.part || !/^[\p{L}\p{N}_ .-]{1,80}$/u.test(ir.part)) errors.push('part: nombre de archivo simple (sin ruta ni extensión)');
   if (ir?.units && ir.units !== 'mm') errors.push('units: por ahora solo "mm"');
+  if (ir?.dimension_style !== undefined && !['baseline', 'drawing'].includes(ir.dimension_style)) errors.push('dimension_style: baseline o drawing (v3.22: drawing acota largo y ángulo de las líneas inclinadas, como en los planos)');
   const params = {};
   for (const [k, v] of Object.entries(ir?.params ?? {})) {
     if (!/^[A-Za-z_][A-Za-z0-9_]{0,30}$/.test(k) || ['pi', 'sqrt', 'sin', 'cos', 'tan'].includes(k)) errors.push(`params.${k}: nombre inválido`);
@@ -213,6 +214,8 @@ export function resolveIR(ir) {
   // volume is over or short and which operations have a volume of that size (where the drawing was probably misread)
   if (X.mass_g !== undefined) { expect.mass_g = E(X.mass_g, 'expect.mass_g'); if (!(expect.mass_g > 0)) errors.push('expect.mass_g: > 0'); }
   if (X.box_mm !== undefined) expect.box_mm = Array.isArray(X.box_mm) && X.box_mm.length === 3 ? X.box_mm.map((b, k) => E(b, `expect.box_mm[${k}]`)) : (errors.push('expect.box_mm: [x, y, z]'), null);
+  // v3.22 iso {image_path, region_px?}: after the build the part is compared with the drawing isometric (sw_iso_check)
+  if (X.iso !== undefined) { const o = X.iso; if (o && typeof o.image_path === 'string' && o.image_path.length > 4 && (o.region_px === undefined || (Array.isArray(o.region_px) && o.region_px.length === 4 && o.region_px.every(num)))) expect.iso = { image_path: o.image_path, ...(o.region_px ? { region_px: o.region_px } : {}) }; else errors.push('expect.iso: {image_path, region_px?: [left, top, right, bottom]}'); }
   // v3.7: 1e-5 relative (0.001 %): SolidWorks mass properties of many curved faces differ ~3e-5 per hole from the exact formula
   expect.tolerance_mm3 = X.tolerance_mm3 ?? Math.max(0.01, (expect.volume_mm3 ?? 0) * 1e-5);
   if (!steps.length) errors.push('features: no hay operaciones');
@@ -360,6 +363,22 @@ export async function partBuild(args, { worker, signal, root } = {}) {
   // v3.14: a changed IR whose name is taken gets Name_2, Name_3... (was Name_<random>, e.g. Cigueñal_mvudwkzl)
   let name = `${ir.part}.SLDPRT`;
   if (args.reuse) for (let k = 2; existsSync(join(genDir, name)); k++) name = `${ir.part}_${k}.SLDPRT`;
+  // v3.22 a build that failed leaves the file create_part saved at its start; the next build with the same name was refused
+  // ("Destination already exists"). When that file is still exactly what the failed build left, its document is closed and the
+  // file moved to generated\fallidos (never deleted); a file saved since (sw_save) is somebody's work and stays.
+  const failMark = join(cacheDir, 'failed', name + '.json');
+  let movedFailed = null;
+  if (existsSync(join(genDir, name)) && existsSync(failMark)) {
+    try { const m = JSON.parse(readFileSync(failMark, 'utf8')), p = join(genDir, name);
+      if (statSync(p).size === m.size && fileHash(p) === m.sha256) {
+        if (m.document_id) try { await call(worker, 'close_document', { document_id: m.document_id, discard_changes: true }, signal); } catch { }
+        const dir = join(genDir, 'fallidos'); mkdirSync(dir, { recursive: true });
+        const to = join(dir, name.replace(/\.SLDPRT$/i, '') + ' ' + new Date().toISOString().replace(/[:.]/g, '-') + '.SLDPRT');
+        renameSync(p, to); movedFailed = to; writeFileSync(failMark, JSON.stringify({ ...m, moved_to: to })); }
+    } catch { }
+  }
+  const markFailed = (docId, why) => { try { const p = join(genDir, name); if (!existsSync(p)) return; mkdirSync(join(cacheDir, 'failed'), { recursive: true });
+    writeFileSync(failMark, JSON.stringify({ document_id: docId, size: statSync(p).size, sha256: fileHash(p), error: String(why).slice(0, 300) })); } catch { } };
   const id = (await call(worker, 'create_part', { name, template: args.template ?? env.default_part_template }, signal)).document_id;
   const built = [], planeIdx = {}, log = [];
   let vol = 0, bodies = 0;
@@ -367,11 +386,16 @@ export async function partBuild(args, { worker, signal, root } = {}) {
     for (const st of res.steps) {
       const rec = { id: st.id, op: st.op }, t0 = performance.now();
       if (st.sketch) {
-        const t = st.sketch.target, sa = { document_id: id, entities: st.sketch.entities, dimension: true, ...(st.sketch.fillets.length ? { fillets: st.sketch.fillets } : {}) };
+        const t = st.sketch.target, sa = { document_id: id, entities: st.sketch.entities, dimension: true, ...(ir.dimension_style ? { dimension_style: ir.dimension_style } : {}), ...(st.sketch.fillets.length ? { fillets: st.sketch.fillets } : {}) };
         if (t.plane_index !== undefined) sa.plane_index = t.plane_index; else if (t.plane_of) sa.plane_index = planeIdx[t.plane_of];
         else sa.face_point_mm = t.face_near_mm;   // v3.8 speed: the worker finds the planar face by the point (no topology listing)
         let s; try { s = await call(worker, 'create_sketch', sa, signal); }
-        catch (e) { if (st.op !== 'sketch') throw e; s = await call(worker, 'create_sketch', { ...sa, dimension: false }, signal); rec.note = 'sin cotas automáticas: ' + e.message; }
+        catch (e) { if (st.op !== 'sketch') throw e;
+          // v3.22 when the retry without dimensions fails too, the first error is the one that says what is wrong (light_guard refuses
+          // any retry with "Not modified: an earlier failed edit", which hid it)
+          try { s = await call(worker, 'create_sketch', { ...sa, dimension: false }, signal); }
+          catch (e2) { throw new Error(e.message + (/earlier failed edit/i.test(e2.message) ? '' : ' (sin cotas tampoco: ' + e2.message.slice(0, 200) + ')')); }
+          rec.note = 'sin cotas automáticas: ' + e.message; }
         // an open path for a sweep may stay under-defined; every other sketch must be fully defined
         if (s.status !== 3 && st.op !== 'sketch') throw new Error(`${st.id}: el croquis ${s.sketch} no quedó totalmente definido (estado ${s.status})`);
         rec.sketch = s.sketch;
@@ -431,6 +455,8 @@ export async function partBuild(args, { worker, signal, root } = {}) {
     // one full rebuild at the end (each feature only rebuilt what changed): any rebuild error still stops the part here
     const ins = await call(worker, 'verify_rebuild', { document_id: id }, signal);
     const rows = checkExpect(res.expect, ins, res.material?.name);
+    if (res.expect.iso) { try { const r = await call(worker, 'iso_check', { document_id: id, ...res.expect.iso }, signal); rows.push({ check: 'iso', ok: r.ok, verdict: r.verdict, best: r.best, current_rank: r.current_rank, fix: r.fix, picture: r.path }); }
+      catch (e) { rows.push({ check: 'iso', ok: false, error: e.message.slice(0, 300) }); } }
     const ok = rows.every(r => r.ok) && (!flex || !(flex.summary?.fragile?.length));
     const finish_s = +((performance.now() - tm) / 1000).toFixed(2);
     // reuse: save now and remember this IR -> file (only a part that passed every check)
@@ -443,11 +469,13 @@ export async function partBuild(args, { worker, signal, root } = {}) {
     const mass_hint = mrow && num(ins.density_kg_m3) && ins.density_kg_m3 > 0 ? (() => { const dv = (mrow.model - mrow.expected) / (ins.density_kg_m3 * 1e-6);
       return { volume_delta_mm3: +dv.toFixed(1), meaning: dv > 0 ? 'sobra material' : 'falta material', suspects: built.filter(f => num(f.volume_change_mm3) && Math.abs(f.volume_change_mm3) > 0).map(f => ({ id: f.id, op: f.op, volume_change_mm3: f.volume_change_mm3, ratio: +(Math.abs(dv) / Math.abs(f.volume_change_mm3)).toFixed(3) })).filter(f => f.ratio >= 0.02 && f.ratio <= 1.2).sort((a, b) => { const m = f => Math.sign(f.volume_change_mm3) === Math.sign(dv) ? 0 : 1, k = f => Math.abs(Math.log(f.ratio * 5)); return m(a) - m(b) || k(a) - k(b); }).slice(0, 5),
         note: 'Operaciones cuyo volumen es del orden de la diferencia: revisa en el plano sus cotas (desde dónde se mide, plano medio o un lado, radio interior o exterior).' }; })() : null;
-    return { ok, document_id: id, part: name, ...(args.reuse && ok && ins.path ? { path: ins.path } : {}), saved: !!(args.reuse && ok), ...(mass_hint ? { mass_hint } : {}), features: built, checks: rows, finish_s, parameters: links, flex, warnings: [...res.warnings, ...log],
+    if (!ok && !args.reuse) markFailed(id, 'checks failed');
+    return { ok, document_id: id, part: name, ...(movedFailed ? { moved_failed_build: movedFailed } : {}), ...(args.reuse && ok && ins.path ? { path: ins.path } : {}), saved: !!(args.reuse && ok), ...(mass_hint ? { mass_hint } : {}), features: built, checks: rows, finish_s, parameters: links, flex, warnings: [...res.warnings, ...log],
       note: 'Unsaved until sw_save. Every parameter is a SolidWorks global variable; linked dimensions follow it (edit with action edit or in SolidWorks Equations).' };
   } catch (e) {
-    return { ok: false, document_id: id, part: name, failed_at: built.length < res.steps.length ? res.steps[built.length].id : null, error: e.message, safe_edit: e.safe_edit, features: built,
-      note: 'The part is open and unsaved with the steps that succeeded (an IR build is not rolled back step by step: light_guard). Fix the IR and build again with another part name (the unchanged parts are reused), or close it with discard_changes.' };
+    markFailed(id, e.message);
+    return { ok: false, document_id: id, part: name, ...(movedFailed ? { moved_failed_build: movedFailed } : {}), failed_at: built.length < res.steps.length ? res.steps[built.length].id : null, error: e.message, safe_edit: e.safe_edit, features: built,
+      note: 'The part is open and unsaved with the steps that succeeded (an IR build is not rolled back step by step: light_guard). Fix the IR and build again with the same part name: this failed part is closed and its file moved to generated\\fallidos, unless you saved it. Or close it with discard_changes.' };
   }
   } finally { if (holdHere) worker.call('fast_hold', { on: false }).catch(() => null); }
 }

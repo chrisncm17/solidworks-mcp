@@ -16,7 +16,7 @@ partial class Worker {
   result=null;if(op!="wrap"&&op!="boundary")return false;
   if(d.GetType()!=1)throw new Exception(op+" works on a managed PART");
   double v0=PartVolumeMm3(d);var featsBefore=new HashSet<string>(AllFeatures(d).Select(x=>x.Name));
-  IFeature f=null;
+  IFeature f=null;string note=null;
   if(op=="wrap"){
    var sk=SketchFeature(d,Str(a,"sketch"));string type=a.ContainsKey("type")?Str(a,"type"):"emboss";
    int t=type=="emboss"?(int)swWrapSketchType_e.swWrapSketchType_Emboss:type=="deboss"?(int)swWrapSketchType_e.swWrapSketchType_Engrave:type=="scribe"?(int)swWrapSketchType_e.swWrapSketchType_Scribe:-1;
@@ -39,7 +39,8 @@ partial class Worker {
    // sketch selected by name returned null, tested): try sketch / contour selection with InsertNetBlend2 and InsertNetBlend
    // and keep the first feature whose volume moves the right way (boss grows, cut shrinks); anything else is deleted again
    var tried=new List<string>();
-   foreach(bool contour in new[]{true,false})foreach(bool v2 in new[]{true,false})foreach(short ty in cut?new short[]{2,0}:new short[]{1}){if(f!=null)break;bool solid=true;tried.Add((contour?"contour":"sketch")+(v2?" NetBlend2":" NetBlend")+" type "+ty);
+   foreach(bool contour in new[]{true,false})foreach(bool v2 in new[]{true,false})// v3.22 measured: Type 0 = boss (solid), 2 = surface; Type 1 was tried as the boss and always gave null. Cut: 1 first
+   foreach(short ty in cut?new short[]{1,0}:new short[]{0}){if(f!=null)break;bool solid=true;tried.Add((contour?"contour":"sketch")+(v2?" NetBlend2":" NetBlend")+" type "+ty);
     try{
      d.ClearSelection2(true);var sm=(ISelectionMgr)d.SelectionManager;
      // each curve carries its own mark: direction + 8192*(index+1) (8193, 16385... in SolidWorks' own boundary example)
@@ -59,16 +60,28 @@ partial class Worker {
      f=(v2?fm.InsertNetBlend2(ty,(short)profiles.Count,(short)guides.Count,false,0.0001,true,Flag(a,"merge",true),true,true,false,-1,-1,false,-1,false,false,-1,false,-1,false,solid)
       :fm.InsertNetBlend(ty,(short)profiles.Count,(short)guides.Count,false,0.0001,true,Flag(a,"merge",true),true,true,false,-1,-1,false,-1,false,false,-1,false,-1,true)) as IFeature;
     }catch(Exception ex){tried[tried.Count-1]+=" ("+ex.Message+")";f=null;}finally{d.ClearSelection2(true);}
+    // v3.22 InsertNetBlend can make the feature and still return null (measured): take it from the tree
+    if(f==null)f=AllFeatures(d).LastOrDefault(x=>!featsBefore.Contains(x.Name)&&!(x.GetSpecificFeature2() is ISketch));
     if(f==null){tried[tried.Count-1]+=" → null";continue;}
-    double dv=PartVolumeMm3(d)-v0;tried[tried.Count-1]+=" → "+f.Name+" dV "+Math.Round(dv,1);if(cut?dv<-1e-6:dv>1e-6)break;
+    double dv=PartVolumeMm3(d)-v0;bool fw;int fe=f.GetErrorCode2(out fw);tried[tried.Count-1]+=" → "+f.Name+" dV "+Math.Round(dv,1)+(fe!=0?" error "+fe:"");if(cut?dv<-1e-6:dv>1e-6)break;
     d.ClearSelection2(true);if(f.Select2(false,0))d.Extension.DeleteSelection2(0);d.ClearSelection2(true);f=null;}
+   // v3.22 measured: the boss works (Type 0) but no variant cuts (dV 0 for Type 0 and 1). A boundary between profiles
+   // without tangency is the loft through them, so a cut falls back to InsertCutBlend with the same profiles and guides
+   if(f==null&&cut){tried.Add("loft cut through the same profiles");
+    try{d.ClearSelection2(true);foreach(var n in profiles)if(!SketchFeature(d,n).Select2(true,1))throw new Exception("Cannot select "+n);
+     foreach(var g in guides)if(!Feature(d,g).Select2(true,2))throw new Exception("Cannot select guide "+g);
+     f=d.FeatureManager.InsertCutBlend(false,true,false,1,0,0,false,0,0,0,true,true) as IFeature;
+    }catch(Exception ex){tried[tried.Count-1]+=" ("+ex.Message+")";f=null;}finally{d.ClearSelection2(true);}
+    if(f==null)f=AllFeatures(d).LastOrDefault(x=>!featsBefore.Contains(x.Name)&&!(x.GetSpecificFeature2() is ISketch));
+    if(f!=null){double dv=PartVolumeMm3(d)-v0;tried[tried.Count-1]+=" → "+f.Name+" dV "+Math.Round(dv,1);note="The boundary cut API removed nothing in this SolidWorks; made as a loft cut through the same profiles and guides (same shape without tangency settings). Tried: "+string.Join(", ",tried);
+     if(dv>=-1e-6){d.ClearSelection2(true);if(f.Select2(false,0))d.Extension.DeleteSelection2(0);d.ClearSelection2(true);f=null;}}}
    // known limit (2026 SP3.2 Standard, tested): every variant returns null for two sketch profiles that sw_loft joins fine
    if(f==null)throw new Exception("Boundary failed ("+string.Join(", ",tried)+"). In SolidWorks 2026 SP3.2 the API refused even profiles that a loft accepts: use sw_loft with the same profiles (and guides) instead. Profiles must be closed, in order and on different planes; guides must touch every profile"+(cut?"; a cut must intersect the body":""));
   }
   d.ForceRebuild3(false);
   var newFeats=AllFeatures(d).Where(x=>!featsBefore.Contains(x.Name)).Select(x=>x.Name).ToArray();
   double v1=PartVolumeMm3(d);
-  result=new{feature=f.Name,new_features=newFeats,volume_before_mm3=v0,volume_after_mm3=v1,volume_change_mm3=Math.Round(v1-v0,3),inspection=Checked(d)};return true;
+  result=new{feature=f.Name,note=note,new_features=newFeats,volume_before_mm3=v0,volume_after_mm3=v1,volume_change_mm3=Math.Round(v1-v0,3),inspection=Checked(d)};return true;
  }
  // first solid-body face that contains the point (part coordinates, mm)
  static IFace2 FaceAtPoint(IModelDoc2 d,double[] pmm){

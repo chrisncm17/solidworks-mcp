@@ -99,12 +99,14 @@ partial class Worker {
    string id=Str(a,"document_id");if(!owned.ContainsKey(id))throw new Exception("Unknown document_id");var d=owned[id];
    bool discard=a.ContainsKey("discard_changes")&&Convert.ToBoolean(a["discard_changes"]);
    bool dirty;try{dirty=d.GetSaveFlag();}catch{dirty=false;}
-   if(dirty&&!discard)throw new Exception("Document has unsaved changes; save it or pass discard_changes=true");
+   bool viewOnly=false;try{viewOnly=dirty&&savedClean.Contains(d.GetPathName());}catch{}
+   if(dirty&&!discard&&!viewOnly)throw new Exception("Document has unsaved changes; save it or pass discard_changes=true");
+   if(viewOnly)dirty=false;   // the file on disk is the last save: only the view changed since
    string title,path;try{title=d.GetTitle();path=d.GetPathName();}catch{
     // dead COM object (document already closed by a failed safe-edit restore): just forget the id
     foreach(var k in owned.Where(x=>x.Value==d).Select(x=>x.Key).ToList()){owned.Remove(k);external.Remove(k);}if(lastDoc==d)lastDoc=null;
     result=new{closed=(string)null,note="The document was already closed; its id was released.",restored_saved_version=ProcessDiskRestore().ToArray()};return true;}
-   sw.CloseDoc(title);
+   sw.CloseDoc(title);try{savedClean.Remove(path);}catch{}
    if(!string.IsNullOrEmpty(path)&&sw.GetOpenDocumentByName(path)!=null)throw new Exception("SolidWorks keeps "+Path.GetFileName(path)+" loaded (an open assembly or drawing references it); its window was closed but the id stays valid. Close that assembly/drawing first.");
    foreach(var k in owned.Where(x=>x.Value==d).Select(x=>x.Key).ToList()){owned.Remove(k);external.Remove(k);}
    recoveryPending.Remove(path);axisCache.Remove(string.IsNullOrEmpty(path)?title:path);if(lastDoc==d)lastDoc=null;

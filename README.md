@@ -64,7 +64,7 @@ Ask your agent: *"Start SolidWorks with sw_exam_ready, then build a 100 x 60 x 1
 ## All tools
 
 <!-- tools:start -->
-**121 tools.** Every option of every tool: [docs/TOOLS.md](docs/TOOLS.md).
+**126 tools.** Every option of every tool: [docs/TOOLS.md](docs/TOOLS.md).
 
 <details><summary><b>Session and documents</b> (20)</summary>
 
@@ -93,7 +93,7 @@ Ask your agent: *"Start SolidWorks with sw_exam_ready, then build a 100 x 60 x 1
 
 </details>
 
-<details><summary><b>Part modeling</b> (43)</summary>
+<details><summary><b>Part modeling</b> (44)</summary>
 
 | Tool | What it does |
 |---|---|
@@ -134,6 +134,7 @@ Ask your agent: *"Start SolidWorks with sw_exam_ready, then build a 100 x 60 x 1
 | `sw_shell` | Keeps the SolidWorks default tree name (features are never renamed); |
 | `sw_sketch` | Read sketch segments, their current indexes, coordinates in meters and relation types. |
 | `sw_sketch_3d` | 3D sketch (Croquis 3D): a path that is not in one plane, for sw_sweep or as a guide. |
+| `sw_sketch_picture` | Put a picture of a drawing (one view of a 3-view, a blueprint) in a NEW sketch at its real scale, to trace splines, profiles and guide curves on it (Sketch Picture). |
 | `sw_sketch_plane` | Move an existing sketch onto another planar support (Editar plano de croquis) without redrawing it: face_of_sketch (the face/plane another sketch sits on), plane (referen… |
 | `sw_split_line` | Split line (Linea de particion) by projection: the sketch is projected onto the faces given by face_points_mm (a point ON each face), dividing them so part of a face can … |
 | `sw_suppress_feature` | Suppress or unsuppress a named feature in the active configuration of a managed part and rebuild. |
@@ -198,7 +199,7 @@ Ask your agent: *"Start SolidWorks with sw_exam_ready, then build a 100 x 60 x 1
 
 </details>
 
-<details><summary><b>Verification, export and delivery</b> (17)</summary>
+<details><summary><b>Verification, export and delivery</b> (21)</summary>
 
 | Tool | What it does |
 |---|---|
@@ -211,13 +212,17 @@ Ask your agent: *"Start SolidWorks with sw_exam_ready, then build a 100 x 60 x 1
 | `sw_feature_info` | Read-only definition of one feature to understand a warning/error the API only reports as a code: type, error/warning, suppression, parents and children; |
 | `sw_geometry` | Read faces, edges, circular radii and bounding boxes of a managed solid. |
 | `sw_inspect` | Inspect managed document. |
+| `sw_iso_check` | Does the part sit like the drawing isometric? Compares the lines of the isometric of the drawing (image_path: a PNG/JPG render or photo of the drawing, region_px the box … |
 | `sw_mass_check` | READ-ONLY mass and center-of-mass verification of a part or assembly (exam check: masa y centro de masa X,Y,Z). |
 | `sw_pack_and_go` | Pack and Go a SAVED managed assembly or drawing into generated/packs/<folder_name> (flattened, includes referenced parts), then verify that every referenced file exists i… |
 | `sw_part_diff` | Read-only comparison of a managed PART against an original .SLDPRT (absolute path, opened read-only through a temporary copy): volume, mass, material, solid body count, s… |
+| `sw_part_stages` | Save a part in steps for the student to finish by hand. |
 | `sw_preview` | PNG preview(s) returned as images: a managed part/assembly in one or more standard views (views, default [iso]) or the whole current drawing sheet. |
+| `sw_section_area` | Read-only area of the cut of the solid by a plane (mm2), to compare a loft or a hook with the sections of the drawing, or find where mass is missing. |
 | `sw_session_recipe` | Record what this session does and turn it into a recipe the next chat can follow (MCP resource solidworks://recipe/<id>). |
 | `sw_surface` | The Surfaces tab (Superficies), one action per call, on a managed part; |
 | `sw_topology` | Inspect faces and unique edges with short-lived selection references. |
+| `sw_tree_folder` | Put named features of a managed part (reference planes, sketches...) in one folder of the FeatureManager tree (Carpeta1..., default name, nothing is renamed) so a model w… |
 | `sw_wrap` | Envolver: wrap a closed sketch onto a face of the part. |
 
 </details>

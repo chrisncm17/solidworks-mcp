@@ -17,6 +17,10 @@ partial class Worker {
   if(op=="sketch_3d"){
    var pts=Items(a["points_mm"]).Select(o=>Xyz(o,"points_mm")).ToList();string type=Str2(a,"type","polyline");
    if(pts.Count<2)throw new Exception("points_mm needs at least 2 points");
+   // v3.21 closed: the last point returns to the first (a closed spline is a loft profile; a closed polyline a planar loop)
+   bool closed=Flag(a,"closed");
+   if(closed){if(pts.Count<3)throw new Exception("closed needs at least 3 points");var f0=pts[0];var fl=pts[pts.Count-1];
+    if(Math.Sqrt(Math.Pow(f0[0]-fl[0],2)+Math.Pow(f0[1]-fl[1],2)+Math.Pow(f0[2]-fl[2],2))>1e-9)pts.Add(new[]{f0[0],f0[1],f0[2]});}
    var before=FeatureNames(d);var sm=d.SketchManager;bool db=sm.AddToDB,show=sm.DisplayWhenAdded;var segs=new List<ISketchSegment>();
    try{
     d.ClearSelection2(true);sm.AddToDB=true;sm.DisplayWhenAdded=false;sm.Insert3DSketch(true);
@@ -29,7 +33,7 @@ partial class Worker {
      if(sm.CreateFillet(Num(a,"fillet_mm")/1000,(int)swConstrainedCornerAction_e.swConstrainedCornerInteract)==null)throw new Exception("Corner "+i+" does not fit a fillet of "+Num(a,"fillet_mm")+" mm");}
    }finally{d.ClearSelection2(true);sm.Insert3DSketch(true);sm.AddToDB=db;sm.DisplayWhenAdded=show;}
    var f=AllFeatures(d).LastOrDefault(x=>!before.Contains(x.Name)&&x.GetTypeName2()=="3DProfileFeature");if(f==null)throw new Exception("The 3D sketch was not created");
-   result=new{feature=f.Name,type=type,points=pts.Count,segments=((object[])((ISketch)f.GetSpecificFeature2()).GetSketchSegments()??new object[0]).Length,note="Use it as path or guide of sw_sweep or as guide of sw_loft. Unsaved until sw_save."};return true;
+   result=new{feature=f.Name,type=type,closed=closed,points=pts.Count,segments=((object[])((ISketch)f.GetSpecificFeature2()).GetSketchSegments()??new object[0]).Length,note="Use it as path or guide of sw_sweep or as guide of sw_loft. Unsaved until sw_save."};return true;
   }
   if(op=="draft_analysis"){
    var dir=Xyz(a["direction"],"direction");double n=Math.Sqrt(dir.Sum(v=>v*v));if(n<1e-9)throw new Exception("direction has no length");dir=dir.Select(v=>v/n).ToArray();
@@ -56,12 +60,40 @@ partial class Worker {
    result=new{feature=f.Name,type=f.GetTypeName2(),volume_before_mm3=v0,volume_after_mm3=PartVolumeMm3(d),inspection=Checked(d)};return true;
   }
   // split_line
-  {var sk=SketchFeature(d,Str(a,"sketch"));var faces=Items(a["face_points_mm"]).Select(o=>{var p=Xyz(o,"face_points_mm");var x=FaceAtPoint(d,p);if(x==null)throw new Exception("No face passes through "+string.Join(",",p));return x;}).ToList();
-   int f0=AllFaceCount(d);
-   try{d.ClearSelection2(true);if(!sk.Select2(false,4))throw new Exception("Cannot select sketch "+sk.Name);foreach(var x in faces)SelectMarked(d,x,1,"face to split");d.InsertSplitLineProject(Flag(a,"reverse"),Flag(a,"single_direction"));}finally{d.ClearSelection2(true);}
-   var f=NewFeature(d,had);if(f==null)throw new Exception("Split line failed: the sketch must project onto the faces");
-   int f1=AllFaceCount(d);if(f1<=f0)throw new Exception("The split line did not divide any face ("+f.Name+"): check that the sketch falls on those faces");
-   result=new{feature=f.Name,type=f.GetTypeName2(),faces_before=f0,faces_after=f1,inspection=Checked(d)};return true;}
+  {bool inter=a.ContainsKey("tool_points_mm")||a.ContainsKey("tool_plane_index");
+   if(inter==a.ContainsKey("sketch"))throw new Exception("split_line: give sketch (projection) or tool_points_mm / tool_plane_index (intersection), one of the two");
+   var faces=Items(a["face_points_mm"]).Select(o=>{var p=Xyz(o,"face_points_mm");var x=FaceAtPoint(d,p)??AnyFaceAt(d,p,"face_points_mm");return x;}).ToList(); // v3.25 surface bodies too
+   int f0=AllFaceCount(d);IFeature f=null;var tried=new List<string>();var toolNames=new List<string>();
+   if(!inter){var sk=SketchFeature(d,Str(a,"sketch"));
+    try{d.ClearSelection2(true);if(!sk.Select2(false,4))throw new Exception("Cannot select sketch "+sk.Name);foreach(var x in faces)SelectMarked(d,x,1,"face to split");d.InsertSplitLineProject(Flag(a,"reverse"),Flag(a,"single_direction"));}finally{d.ClearSelection2(true);}
+    f=NewFeature(d,had);if(f==null)throw new Exception("Split line failed: the sketch must project onto the faces");}
+   else{
+    // v3.26 intersection: the faces are divided where planes or other bodies cross them (a band around a fuselage, where a
+    // projection is tangent at the top and bottom). Which marks the call reads is not documented: the variants are tried in turn.
+    var tools=a.ContainsKey("tool_points_mm")?Items(a["tool_points_mm"]).Select(o=>{var p=Xyz(o,"tool_points_mm");var h=BodiesOf(d,0).Concat(BodiesOf(d,1)).Select(b=>new{b,dd=BodyDistMm(b,p)}).OrderBy(x=>x.dd).FirstOrDefault();
+     if(h==null||h.dd>0.05)throw new Exception("No body passes through tool_points_mm ["+string.Join(", ",p)+"]");return h.b;}).GroupBy(b=>b.Name).Select(g=>g.First()).ToList():new List<IBody2>();
+    toolNames=tools.Select(b=>b.Name).ToList();
+    IFeature plane=a.ContainsKey("tool_plane_index")?PlaneByIndex(d,Convert.ToInt32(a["tool_plane_index"])):null;
+    foreach(int opt in new[]{0,1})foreach(int tm in new[]{0,1,2,4})foreach(int fmk in new[]{0,1,2,4}){
+     if(f!=null||tm==fmk)continue;
+     try{d.ClearSelection2(true);
+      if(plane!=null&&!plane.Select2(true,tm))continue;
+      foreach(var t in tools)Mark(d,t,tm,"tool "+t.Name);
+      foreach(var x in faces)Mark(d,x,fmk,"face to split");
+      f=d.FeatureManager.InsertSplitLineIntersect(opt) as IFeature??NewFeature(d,had);
+      if(f!=null)tried.Add("intersection option "+opt+", tool mark "+tm+", faces mark "+fmk);
+     }catch(Exception ex){if(tried.Count<3)tried.Add(ex.Message);}
+     finally{d.ClearSelection2(true);}
+    }
+    if(f==null)throw new Exception("Split line by intersection failed: the planes or bodies must cross those faces"+(tried.Count>0?" ("+string.Join("; ",tried)+")":""));
+    d.EditRebuild3();
+   }
+   int f1=AllFaceCount(d);if(f1<=f0)throw new Exception("The split line did not divide any face ("+f.Name+"): check that the "+(inter?"tools cross":"sketch falls on")+" those faces");
+   // v3.26 hide_tools: the tool bodies of an intersection are hidden (they stay in the tree, the split line needs them)
+   var hidden=new List<string>();
+   if(inter&&Flag(a,"hide_tools"))foreach(var b in BodiesOf(d,0).Concat(BodiesOf(d,1)).Where(b=>toolNames.Contains(b.Name)).ToList()){b.HideBody(true);hidden.Add(b.Name);}
+   if(hidden.Count>0){d.SetSaveFlag();d.GraphicsRedraw2();}
+   result=new{feature=f.Name,type=f.GetTypeName2(),mode=inter?"intersection":"projection",faces_before=f0,faces_after=f1,tools=inter?toolNames.ToArray():null,hidden_tools=hidden.Count>0?hidden.ToArray():null,tried=tried.Count>0?tried.ToArray():null,inspection=Checked(d)};return true;}
  }
- static int AllFaceCount(IModelDoc2 d){return ((object[])((IPartDoc)d).GetBodies2((int)swBodyType_e.swSolidBody,true)??new object[0]).Sum(b=>((IBody2)b).GetFaceCount());}
+ static int AllFaceCount(IModelDoc2 d){return BodiesOf(d,0).Concat(BodiesOf(d,1)).Sum(b=>b.GetFaceCount());} // v3.25 surface bodies count too
 }

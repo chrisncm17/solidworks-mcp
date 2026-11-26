@@ -1,6 +1,6 @@
 # Tools
 
-121 tools. Generated from `server/tools.mjs` by `npm run tools` - do not edit by hand.
+126 tools. Generated from `server/tools.mjs` by `npm run tools` - do not edit by hand.
 
 ## Session and documents
 
@@ -55,7 +55,7 @@ Create a native assembly from saved managed parts. Each component is placed with
 
 ### `sw_create_part`
 
-Create and save an empty native SLDPRT using an existing absolute PRTDOT template. Returns document_id. Does not overwrite files.
+Create and save an empty native SLDPRT using an existing absolute PRTDOT template. Returns document_id. Does not overwrite files. v3.22 a name without extension gets .SLDPRT.
 
 | Option | Type / values | Required | Notes |
 |---|---|---|---|
@@ -230,7 +230,7 @@ Create and save a new native parametric cylinder. Dimensions are millimeters; te
 
 ### `sw_create_sketch`
 
-Keeps the SolidWorks default tree name (features are never renamed); the response returns it. Create a 2D sketch from lines, arcs, circles and slots (start/end centers + width) on a reference plane (zero-based tree order: 0 Front, 1 Top, 2 Right, then planes made with sw_ref_plane) OR planar face reference. Coordinates are mm in local sketch XY, not world XY. Default fix_geometry=false leaves ordinary editable geometry; true adds fixed constraints, not driving dimensions. dimension=true instead FULLY DEFINES the sketch with relations and driving dimensions to the origin (SolidWorks Fully Define Sketch) without moving anything, and v3.20 puts them in order (horizontal ones in rows under the sketch, vertical ones in columns to its left, the shortest nearest, none on top of another; radii and diameters just outside their arc; dimension_order says how many moved), so drawings get complete dimensions via sw_drawing_annotate and sw_set_dimension can change sizes later; if dimensioning fails (sketch moved or not fully defined) the new sketch is deleted and the error says so. Put the part origin at a corner or center of the profile for clean drawing dimensions (they are measured from the origin). dimension and fix_geometry are exclusive. fillets rounds corners and chamfers bevels them (distance, distance+distance2 or distance+angle_deg) at the point where two segments meet (local mm). Returns sketch_normal (world).
+Keeps the SolidWorks default tree name (features are never renamed); the response returns it. Create a 2D sketch from lines, arcs, circles, slots (start/end centers + width) and v3.21 ellipses (center, radius_x_mm along local X, radius_y_mm along local Y, angle_deg turns both) and v3.25 splines (points_mm it passes through; closed returns to the first point and makes a loft profile) on a reference plane (zero-based tree order: 0 Front, 1 Top, 2 Right, then planes made with sw_ref_plane) OR planar face reference. Coordinates are mm in local sketch XY, not world XY. Default fix_geometry=false leaves ordinary editable geometry; true adds fixed constraints, not driving dimensions. dimension=true instead FULLY DEFINES the sketch with relations and driving dimensions to the origin (SolidWorks Fully Define Sketch) without moving anything, and v3.20 puts them in order (horizontal ones in rows under the sketch, vertical ones in columns to its left, the shortest nearest, none on top of another; radii and diameters just outside their arc; dimension_order says how many moved), so drawings get complete dimensions via sw_drawing_annotate and sw_set_dimension can change sizes later; if dimensioning fails (sketch moved or not fully defined) the new sketch is deleted and the error says so. Put the part origin at a corner or center of the profile for clean drawing dimensions (they are measured from the origin). dimension and fix_geometry are exclusive. fillets rounds corners and chamfers bevels them (distance, distance+distance2 or distance+angle_deg) at the point where two segments meet (local mm). Returns sketch_normal (world).
 
 | Option | Type / values | Required | Notes |
 |---|---|---|---|
@@ -238,9 +238,10 @@ Keeps the SolidWorks default tree name (features are never renamed); the respons
 | `plane_index` | integer (>= 0, <= 50) |  |  |
 | `face_reference` | string |  |  |
 | `face_point_mm` | array of number (3) |  | v3.8 faster: a point on the planar face (world mm), no sw_topology needed |
-| `entities` | array of object or object or object or object | yes |  |
+| `entities` | array of object or object or object or object or object or object | yes |  |
 | `fix_geometry` | boolean |  |  |
 | `dimension` | boolean |  |  |
+| `dimension_style` | `baseline` \\| `drawing` |  | v3.22 with dimension=true. drawing: each inclined line gets its length (aligned) and its angle to a line that meets it, horizontal or vertical first, as school drawings show them; Fully Define adds the rest. baseline (default): only horizontal and vertical offsets from the origin. |
 | `fillets` | array of object |  |  |
 | `chamfers` | array of object |  |  |
 | `keep_broken` | boolean |  | Keep the result even if it breaks other features/mates (default: it is undone automatically and verified). sw_save then refuses to save until fixed. |
@@ -268,12 +269,13 @@ Keeps the SolidWorks default tree name (features are never renamed); the respons
 
 ### `sw_delete_feature`
 
-Delete a named feature and its absorbed sketch from a managed part (for example a failed attempt), so the FeatureManager tree stays clean. Refused BEFORE deleting when other features depend on it (delete those first). Unsaved until sw_save.
+Delete a named feature and its absorbed sketch from a managed part (for example a failed attempt), so the FeatureManager tree stays clean. Refused BEFORE deleting when other features depend on it (delete those first). v3.21 the response lists deleted_sketches (a loft takes all its profiles with it); keep_sketches=true deletes only the feature and keeps its sketches to reuse them (kept_sketches). Unsaved until sw_save.
 
 | Option | Type / values | Required | Notes |
 |---|---|---|---|
 | `document_id` | string | yes |  |
 | `name` | string | yes |  |
+| `keep_sketches` | boolean |  |  |
 | `keep_broken` | boolean |  | Keep the result even if it breaks other features/mates (default: it is undone automatically and verified). sw_save then refuses to save until fixed. |
 
 ### `sw_delete_relation`
@@ -484,7 +486,7 @@ Managed parts only. list is read-only; set_global creates/updates a unitless num
 
 ### `sw_part_build`
 
-Build an EDITABLE part from a part IR (part-ir/1): named params (numbers) and expressions (+ - * / ^ ( ) pi sqrt sin cos tan) in features extrude\|cut\|revolve (sketch on front\|top\|right, a previous plane id, or on_face_near [x,y,z]; entities line\|rect\|poly\|circle(d or r)\|arc\|slot, all in sketch mm), fillet\|chamfer (edges [{near:[x,y,z]}] world mm), hole (Hole Wizard: type, size, at, depth), linear_pattern\|circular_pattern\|mirror (of: previous ids), plane (from, offset), shell; material {name}; expect {bodies, volume_mm3, box_mm, tolerance_mm3} as expressions. check: validate and list steps (no SolidWorks). build: every sketch fully dimensioned, each step verified (adds/removes material), optional flex_test (sw_part_flex), then every param becomes a SolidWorks global variable and dimensions that ONE IR expression explains get an equation; returns checks and links (ambiguous ones are listed, not linked). edit (document_id, params): change globals, rebuild, re-check expect recomputed with the new values. Keeps default tree names; unsaved until sw_save.
+Build an EDITABLE part from a part IR (part-ir/1): named params (numbers) and expressions (+ - * / ^ ( ) pi sqrt sin cos tan) in features extrude\|cut\|revolve (sketch on front\|top\|right, a previous plane id, or on_face_near [x,y,z]; entities line\|rect\|poly\|circle(d or r)\|arc\|slot, all in sketch mm), fillet\|chamfer (edges [{near:[x,y,z]}] world mm), hole (Hole Wizard: type, size, at, depth), linear_pattern\|circular_pattern\|mirror (of: previous ids), plane (from, offset), shell; material {name}; expect {bodies, volume_mm3, box_mm, tolerance_mm3} as expressions, and v3.22 expect.iso {image_path, region_px} compares the built part with the drawing isometric (sw_iso_check) so a part turned over fails the build check. check: validate and list steps (no SolidWorks). build: every sketch fully dimensioned, each step verified (adds/removes material), optional flex_test (sw_part_flex), then every param becomes a SolidWorks global variable and dimensions that ONE IR expression explains get an equation; returns checks and links (ambiguous ones are listed, not linked). edit (document_id, params): change globals, rebuild, re-check expect recomputed with the new values. Keeps default tree names; unsaved until sw_save.
 
 | Option | Type / values | Required | Notes |
 |---|---|---|---|
@@ -676,7 +678,7 @@ Read sketch segments, their current indexes, coordinates in meters and relation 
 
 ### `sw_sketch_3d`
 
-v3.16 3D sketch (Croquis 3D): a path that is not in one plane, for sw_sweep or as a guide. points_mm in part coordinates; type polyline (straight segments, default) with optional fillet_mm at every corner, or spline through the points. Returns the sketch name. Unsaved until sw_save.
+v3.16 3D sketch (Croquis 3D): a path that is not in one plane, for sw_sweep or as a guide. points_mm in part coordinates; type polyline (straight segments, default) with optional fillet_mm at every corner, or spline through the points. v3.21 closed=true returns to the first point (do not repeat it): a closed spline is a profile for sw_surface loft, a closed polyline a flat loop. Returns the sketch name. Unsaved until sw_save.
 
 | Option | Type / values | Required | Notes |
 |---|---|---|---|
@@ -684,6 +686,30 @@ v3.16 3D sketch (Croquis 3D): a path that is not in one plane, for sw_sweep or a
 | `points_mm` | array of array of number (>= -100000, <= 100000) (3) | yes |  |
 | `type` | `polyline` \\| `spline` |  |  |
 | `fillet_mm` | number (> 0, <= 10000) |  |  |
+| `closed` | boolean |  |  |
+| `keep_broken` | boolean |  | Keep the result even if it breaks other features/mates (default: it is undone automatically and verified). sw_save then refuses to save until fixed. |
+
+### `sw_sketch_picture`
+
+v3.24 Put a picture of a drawing (one view of a 3-view, a blueprint) in a NEW sketch at its real scale, to trace splines, profiles and guide curves on it (Sketch Picture). Scale: scale_ref {px_a, px_b, distance_mm} (two pixels of a known length, e.g. the wingspan or the fuselage length) or mm_per_px or width_mm. anchor {px, at_mm} puts that pixel on that sketch point (e.g. the nose or the root leading edge at [0,0]); default the picture center on the origin. crop_px [x0,y0,x1,y1] cuts one view out of a sheet with several (saved as a new png, the original is never changed); flip_x/flip_y mirror and rotate_deg turns it counterclockwise (after the crop). EVERY pixel coordinate is in the ORIGINAL file. px_to_mm returns where given pixels land in the sketch; trace_columns returns the upper and lower outline of the dark drawing per column (sketch mm) to build splines. Works in surfaces-only mode (it is a sketch).
+
+| Option | Type / values | Required | Notes |
+|---|---|---|---|
+| `document_id` | string | yes |  |
+| `image_path` | string | yes |  |
+| `plane_index` | integer (>= 0, <= 50) |  |  |
+| `crop_px` | array of number (>= 0, <= 100000) (4) |  |  |
+| `flip_x` | boolean |  |  |
+| `flip_y` | boolean |  |  |
+| `rotate_deg` | `0` \\| `90` \\| `180` \\| `270` |  |  |
+| `scale_ref` | object |  |  |
+| `mm_per_px` | number (> 0, <= 1000000) |  |  |
+| `width_mm` | number (> 0, <= 1000000) |  |  |
+| `anchor` | object |  |  |
+| `transparency` | number (>= 0, <= 1) |  |  |
+| `px_to_mm` | array of array of number (>= -100000, <= 100000) (2) |  |  |
+| `trace_columns` | integer (>= 2, <= 400) |  |  |
+| `threshold` | integer (>= 0, <= 255) |  |  |
 | `keep_broken` | boolean |  | Keep the result even if it breaks other features/mates (default: it is undone automatically and verified). sw_save then refuses to save until fixed. |
 
 ### `sw_sketch_plane`
@@ -702,15 +728,18 @@ Move an existing sketch onto another planar support (Editar plano de croquis) wi
 
 ### `sw_split_line`
 
-v3.16 Split line (Linea de particion) by projection: the sketch is projected onto the faces given by face_points_mm (a point ON each face), dividing them so part of a face can have its own fillet, draft or appearance. The body keeps its volume. reverse flips the projection, single_direction projects one way only. Checks that a face really was divided. Unsaved until sw_save.
+v3.16 Split line (Linea de particion) by projection: the sketch is projected onto the faces given by face_points_mm (a point ON each face), dividing them so part of a face can have its own fillet, draft or appearance (v3.25 faces of surface bodies too, e.g. a camouflage with sw_appearance faces). The body keeps its volume. reverse flips the projection, single_direction projects one way only (a sketch on a plane inside a body then marks only the side it faces). Checks that a face really was divided. v3.26 by intersection instead of a sketch: tool_points_mm (a point on each tool body, e.g. a surface extruded from a sketch line) and/or tool_plane_index divide the faces where they cross them, like a band around a fuselage where a projection is tangent at the top and bottom; hide_tools=true hides the tool bodies afterwards. Unsaved until sw_save.
 
 | Option | Type / values | Required | Notes |
 |---|---|---|---|
 | `document_id` | string | yes |  |
-| `sketch` | string | yes | Optional for new features: omit it to keep the SolidWorks default tree name (features are never renamed). Required when referring to an existing feature or sketch. |
+| `sketch` | string |  | Optional for new features: omit it to keep the SolidWorks default tree name (features are never renamed). Required when referring to an existing feature or sketch. |
 | `face_points_mm` | array of array of number (>= -100000, <= 100000) (3) | yes |  |
 | `reverse` | boolean |  |  |
 | `single_direction` | boolean |  |  |
+| `tool_points_mm` | array of array of number (>= -100000, <= 100000) (3) |  |  |
+| `tool_plane_index` | integer (>= 0, <= 200) |  |  |
+| `hide_tools` | boolean |  |  |
 | `keep_broken` | boolean |  | Keep the result even if it breaks other features/mates (default: it is undone automatically and verified). sw_save then refuses to save until fixed. |
 
 ### `sw_suppress_feature`
@@ -1424,7 +1453,7 @@ Measurement sheet (ficha de medidas) of ONE part read from a drawing. Every entr
 
 ### `sw_appearance`
 
-v3.14 Part-level color (MaterialPropertyValues) without touching geometry, mass or the tree. On a managed part: rgb [r,g,b] from 0 to 1 and specular 0..1 (default 0.6). On a managed assembly: parts [{component (name like Biela-1 or prefix Biela: every instance), rgb, specular?}] colors the part file behind each component (all its instances). Unsaved until sw_save (assembly: include_references=true). part-ir/1 also takes appearance {rgb, specular?}.
+v3.14 Part-level color (MaterialPropertyValues) without touching geometry, mass or the tree. On a managed part: rgb [r,g,b] from 0 to 1 and specular 0..1 (default 0.6). On a managed assembly: parts [{component (name like Biela-1 or prefix Biela: every instance), rgb, specular?}] colors the part file behind each component (all its instances). Unsaved until sw_save (assembly: include_references=true). part-ir/1 also takes appearance {rgb, specular?}. v3.25 on a part: list_faces=true lists every face (solid or surface) with a point inside it and its normal; faces [{point_mm, rgb, specular?, transparency?}] colors single faces (transparency 0..1, e.g. a canopy) (e.g. a camouflage after sw_split_line), they win over the part color; each face is checked again after a full rebuild and one that lost its color is listed in not_kept. list_faces with probe_mm lists every face through that point with its stored color (diagnostic).
 
 | Option | Type / values | Required | Notes |
 |---|---|---|---|
@@ -1432,11 +1461,15 @@ v3.14 Part-level color (MaterialPropertyValues) without touching geometry, mass 
 | `rgb` | array of number (>= 0, <= 1) (3) |  |  |
 | `specular` | number (>= 0, <= 1) |  |  |
 | `parts` | array of object |  |  |
+| `faces` | array of object |  |  |
+| `list_faces` | boolean |  |  |
+| `max_faces` | integer (>= 1, <= 5000) |  |  |
+| `probe_mm` | array of number (>= -100000, <= 100000) (3) |  |  |
 | `keep_broken` | boolean |  | Keep the result even if it breaks other features/mates (default: it is undone automatically and verified). sw_save then refuses to save until fixed. |
 
 ### `sw_boundary`
 
-v3.11 Recubrir por limite (Boundary boss/cut): like sw_loft but each profile influences the whole shape, giving smoother transitions; profiles = 2-10 closed sketches in order (different planes), guides = optional open sketches in the second direction that touch every profile; cut=true removes material; merge defaults true. Returns volume before/after. Unsaved until sw_save. EXPERIMENTAL: in SolidWorks 2026 SP3.2 the API returned null for profiles that sw_loft accepts (tested); if it fails, use sw_loft with the same sketches.
+v3.11 Recubrir por limite (Boundary boss/cut): like sw_loft but each profile influences the whole shape, giving smoother transitions; profiles = 2-10 closed sketches in order (different planes), guides = optional open sketches in the second direction that touch every profile; cut=true removes material; merge defaults true. Returns volume before/after. Unsaved until sw_save. v3.22 the boss is made with the boundary feature (measured 19896.13 mm3 for circles r10 and r15 40 apart); the boundary cut API removes nothing in SolidWorks 2026 SP3.2, so a cut is made as a loft cut through the same profiles and guides and the result says so in note.
 
 | Option | Type / values | Required | Notes |
 |---|---|---|---|
@@ -1515,6 +1548,17 @@ Inspect managed document. Parts: volume mm^3, mass grams, material, mass overrid
 |---|---|---|---|
 | `document_id` | string | yes |  |
 
+### `sw_iso_check` (read-only)
+
+v3.22 Does the part sit like the drawing isometric? Compares the lines of the isometric of the drawing (image_path: a PNG/JPG render or photo of the drawing, region_px the box around its isometric view) with the visible edges and outline of the part in the SolidWorks isometric, for the part as it is and turned or mirrored the 47 other ways along its axes. ok:false means another way matches better: best.drawing_up says which model axis the drawing shows up, best.sketch_planes on which plane each sketch had to go (Alzado, Planta, Vista lateral; reversed = flip it), mirrored that a sketch or feature went the wrong way round. Returns a picture: drawing \| part as it is \| best way. Run it after the first extrude and at the end. A shaded isometric (the usual drawing view) is read by where the shade jumps (drawing_mode). Without region_px a picture with several separate drawings (a whole sheet) gives doubtful with a warning, never a verdict. Changes nothing but the view.
+
+| Option | Type / values | Required | Notes |
+|---|---|---|---|
+| `document_id` | string | yes |  |
+| `image_path` | string | yes |  |
+| `region_px` | array of number (>= 0, <= 100000) (4) |  |  |
+| `line_threshold` | integer (>= 1, <= 254) |  |  |
+
 ### `sw_mass_check` (read-only)
 
 READ-ONLY mass and center-of-mass verification of a part or assembly (exam check: masa y centro de masa X,Y,Z). Reports mass, volume, density and center of mass in length_units mm\|cm\|m\|in and mass_units g\|kg\|lb, optionally relative to a coordinate_system of the model; compares with reference {mass, volume_mm3, center_of_mass [x,y,z]} from the drawing with mass_tolerance_percent (default 0.5 = user rule: under 0.5 % is not corrected) and, per center-of-mass component, com_tolerance_percent of the drawing value (default 0.5) OR com_tolerance absolute (default 0.05 mm in length_units), whichever is larger; lists every part (material, density, count, mass per instance, overrides, hidden/suppressed/lightweight) and possible causes of a difference (unit mix-up, origin offset, swapped axes, missing/extra parts, density a part would need, hidden components). expected_materials [{part, material}] checks each part against the drawing table material (Spanish or English SolidWorks library name, e.g. Hierro dúctil = Ductile Iron; same library id or density). With no reference values (exam day) use it plus coordinate_system (sw_coordinate_system at the drawing ORIGIN). Never changes dimensions or materials to force a result.
@@ -1554,9 +1598,20 @@ Read-only comparison of a managed PART against an original .SLDPRT (absolute pat
 | `document_id` | string | yes |  |
 | `original_path` | string | yes |  |
 
+### `sw_part_stages`
+
+v3.22 Save a part in steps for the student to finish by hand. Default three new files in generated: <name> 1 croquis (only the first sketch, dimensioned and shown), <name> 2 extrusion (everything before the first cut, hole, fillet, chamfer or shell) and <name> 3 terminada (the whole part). stages [{name, until}] chooses other steps (until = last tree feature kept; none = whole part). Each stage is a copy with the later features and their sketches deleted and the equations of deleted features removed, rebuilt clean and saved; the open part is not changed. copy_to (absolute folder) also copies the files there, never overwriting.
+
+| Option | Type / values | Required | Notes |
+|---|---|---|---|
+| `document_id` | string | yes |  |
+| `stages` | array of object |  |  |
+| `base_name` | string |  |  |
+| `copy_to` | string |  |  |
+
 ### `sw_preview`
 
-PNG preview(s) returned as images: a managed part/assembly in one or more standard views (views, default [iso]) or the whole current drawing sheet. v3.10 label_faces (parts): every visible face gets a number on the pictures and faces[] gives, per number, its kind (plane, cylinder...), area, diameter and point_mm, a point ON that face (part mm) to pass as face_point_mm / point_mm to other tools; hidden faces are not labelled. Changes the view orientation; writes uniquely named files.
+PNG preview(s) returned as images: a managed part/assembly in one or more standard views (views, default [iso]) or the whole current drawing sheet. v3.10 label_faces (parts): every visible face gets a number on the pictures and faces[] gives, per number, its kind (plane, cylinder...), area, diameter and point_mm, a point ON that face (part mm) to pass as face_point_mm / point_mm to other tools; hidden faces are not labelled. v3.21 planes, sketches, axes and origins are hidden in the pictures (show_references=true keeps them); v3.22 show_dimensions=true draws the sketch and feature dimensions, to check their layout; hide_bodies (body names) or hide_surfaces=true (every surface body, e.g. helper surfaces) hide bodies only for the pictures and are shown again after. Changes the view orientation; writes uniquely named files.
 
 | Option | Type / values | Required | Notes |
 |---|---|---|---|
@@ -1564,6 +1619,20 @@ PNG preview(s) returned as images: a managed part/assembly in one or more standa
 | `views` | array of `iso` \\| `front` \\| `back` \\| `left` \\| `right` \\| `top` \\| `bottom` \\| `trimetric` \\| `dimetric` |  |  |
 | `label_faces` | boolean |  |  |
 | `max_labels` | integer (>= 1, <= 150) |  |  |
+| `show_references` | boolean |  |  |
+| `show_dimensions` | boolean |  |  |
+| `hide_surfaces` | boolean |  |  |
+| `hide_bodies` | array of string |  |  |
+
+### `sw_section_area` (read-only)
+
+v3.24 Read-only area of the cut of the solid by a plane (mm2), to compare a loft or a hook with the sections of the drawing, or find where mass is missing. Each section: plane_index (its plane; origin_mm moves the square along it) OR origin_mm + normal; size_mm keeps only a square of that side around the origin (one arm of the part). A COPY of every solid body is intersected with a thin temporary slab: nothing in the part changes. Returns area_mm2, pieces and the box of the cut.
+
+| Option | Type / values | Required | Notes |
+|---|---|---|---|
+| `document_id` | string | yes |  |
+| `sections` | array of object | yes |  |
+| `thickness_mm` | number (>= 0.01, <= 5) |  |  |
 
 ### `sw_session_recipe` (read-only)
 
@@ -1582,18 +1651,21 @@ v3.11 Record what this session does and turn it into a recipe the next chat can 
 
 ### `sw_surface`
 
-v3.19 The Surfaces tab (Superficies), one action per call, on a managed part; points are part mm and pick the face (0.05 mm), edge (0.5 mm) or surface body they lie on. Make: extrude (sketch, depth_mm, mid_plane or depth2_mm, reverse, cap_ends; v3.20 end up_to_surface or offset_from_surface stops at the face through up_to_point_mm, offset_mm and offset_reverse for the offset), revolve (sketch with ONE construction line, angle_deg), planar (closed sketch, inner loops make holes, or edge_points_mm), loft (profiles, guides, closed), sweep (profile, path, guides), offset (face_points_mm, distance_mm; 0 copies the face), ruled (edge_points_mm, distance_mm, ruled_type, angle_deg), fill (edge_points_mm of a closed boundary, form_solid, knit). Edit: trim (keep_points_mm on each piece to keep; tool_points_mm, tool_sketch or tool_plane_index, or mutual=true; target_points_mm optional), untrim (face_point_mm), extend (edge_points_mm, distance_mm, linear), knit (body_points_mm or all surfaces, form_solid, gap_tolerance_mm), delete_face (face_points_mm, mode delete\|patch\|fill\|fill_tangent), delete_hole (edge_points_mm, one edge of each hole), replace_face (face_points_mm to replace, body_point_mm of the new surface). Solid: thicken and thicken_cut (body_point_mm, thickness_mm, side side1\|side2\|both, fill_volume), cut_with_surface (body_point_mm, reverse keeps the other side). inspect (read only) lists every surface body with its area and OPEN edges (where they are): a gap that keeps a knit from forming a solid shows there first. mode (on=true\|false) turns surfaces-only on for this document: until it is turned off, tools of the Features tab (extrude, cut, revolve, loft, sweep, boundary, shell, chamfer, patterns, mirror, hole wizard, rib, draft, dome, wrap, combine, part_build...) refuse it; sketches, reference geometry, curves, sw_fillet (Redondeo is also in the Surfaces tab), material, mass and save still work. A trim lists WARNING when a target came out whole; a closed full-circle surface (a hole wall) does not trim through the API: knit without it and make that hole with thicken_cut of a planar disk. A knit with form_solid that leaves no solid is an error that lists the open edges. Unsaved until sw_save.
+v3.19 The Surfaces tab (Superficies), one action per call, on a managed part; points are part mm and pick the face (0.05 mm), edge (0.5 mm) or surface body they lie on. Make: extrude (sketch, depth_mm, mid_plane or depth2_mm, reverse, cap_ends; v3.20 end up_to_surface or offset_from_surface stops at the face through up_to_point_mm, offset_mm and offset_reverse for the offset), revolve (sketch with ONE construction line, angle_deg), planar (closed sketch, inner loops make holes, or edge_points_mm), loft (profiles, up to 50 in order, guides, closed; v3.24 a guide can be {sketch, segments} and loft_check {profiles, guides} says, without building, whether each guide is one joined open chain and how far it passes from each profile (a failed loft with guides adds it to the error); v3.21 start_tangency and end_tangency none\|normal: two lofts that share a profile meet without a crease when both are normal there), sweep (profile, path, guides), offset (face_points_mm, distance_mm; 0 copies the face), ruled (edge_points_mm, distance_mm, ruled_type, angle_deg; v3.22 tangent works with the edges at mark 4, normal on an edge of a flat face is made as a wall extruded along the face normal, and on a curved edge that lies in a plane (a tube rim) as a flat band like radiate, on a part plane parallel to it, along the face normal first), fill (edge_points_mm of a closed boundary, form_solid, knit), v3.22 boundary (Superficie limite: profiles = 2 or more sketches in order, open or closed, guides optional; or edge_points_mm, one point on each edge to join), radiate (edge_points_mm, tool_plane_index the plane it grows parallel to, distance_mm, reverse for the inner side, tangent_propagate; the API makes nothing, so the band is drawn: a plane through the edge, converted edges offset distance_mm, a planar surface), mid_surface (face_points_mm in pairs of facing faces of a solid, or none for every pair; position 0 to 1, default 0.5; chosen pairs of flat parallel faces or coaxial cylinders are made as an offset of the first face of each pair toward the second by position times the gap, otherwise every pair of that solid), freeform (face_point_mm, freeform_curves [{direction 0\|1, at 0..1, points [{at 0..1, offset_mm}]}]: the face is pushed by those points), flatten (Aplanar: face_points_mm, up_to_point_mm the vertex that stays, tears, accuracy). v3.23 Curves (Curvas): curve_points (Curva por puntos XYZ: points_mm in order, closed), curve_composite (Curva compuesta: curves = names of sketches or curves and/or edge_points_mm, touching end to end), curve_projected (Curva proyectada: sketch onto the faces at face_points_mm, reverse flips the direction; or onto_sketch, sketch on sketch); each returns curve with length_mm, closed and ends_mm, and its feature name works as the path of a sweep (run in SolidWorks); as a guide of loft or boundary it is not run yet. Edit: trim (keep_points_mm on each piece to keep; tool_points_mm, tool_sketch or tool_plane_index, or mutual=true; target_points_mm optional; v3.22 a plane also cuts a closed tube, along or across), untrim (face_point_mm), extend (edge_points_mm, distance_mm, linear), knit (body_points_mm or all surfaces, form_solid, gap_tolerance_mm), delete_face (face_points_mm, mode delete\|patch\|fill\|fill_tangent; points on every face of a surface body delete that body with Delete/Keep Body), delete_hole (edge_points_mm, one edge of each hole), replace_face (face_points_mm to replace, body_point_mm of the new surface). Solid: thicken and thicken_cut (body_point_mm, thickness_mm, side side1\|side2\|both, fill_volume), cut_with_surface (body_point_mm, reverse keeps the other side), v3.21 join (face_point_mm on the flat face where two solids touch, inside the contact area: a small square there, size_mm default 1, is thickened both ways thickness_mm default 0.2 and fuses them into one solid without adding volume; this replaces Combine, which surfaces-only refuses). inspect (read only) lists every surface body with its area and OPEN edges (where they are): a gap that keeps a knit from forming a solid shows there first. v3.26 hide / show (body_points_mm, a point on each surface body) hide or show surface bodies like Ocultar in the tree (helper surfaces), saved with the part; show also finds hidden ones. mode (on=true\|false) turns surfaces-only on for this document: until it is turned off, tools of the Features tab (extrude, cut, revolve, loft, sweep, boundary, shell, chamfer, patterns, mirror, hole wizard, rib, draft, dome, wrap, combine, part_build...) refuse it; sketches, reference geometry, curves, sw_fillet (Redondeo is also in the Surfaces tab), material, mass and save still work. A trim lists WARNING when a target came out whole. v3.22 a closed tube (a hole wall) trims with a plane (tool_plane_index), a sketch, or a planar tool surface that covers it; two closed tubes trim each other with mutual=true (split lines: each extruded tube projects its sketch onto the other, then the pieces without a keep point are deleted); mutual with only keep_points_mm uses the surfaces that hold them. If a closed tool still fails, knit without it and make that hole with thicken_cut of a planar disk. A knit with form_solid that leaves no solid is an error that lists the open edges. Unsaved until sw_save.
 
 | Option | Type / values | Required | Notes |
 |---|---|---|---|
 | `document_id` | string | yes |  |
-| `action` | `extrude` \\| `revolve` \\| `planar` \\| `loft` \\| `sweep` \\| `offset` \\| `ruled` \\| `fill` \\| `trim` \\| `untrim` \\| `extend` \\| `knit` \\| `delete_face` \\| `delete_hole` \\| `replace_face` \\| `thicken` \\| `thicken_cut` \\| `cut_with_surface` \\| `inspect` \\| `mode` | yes |  |
+| `action` | `extrude` \\| `revolve` \\| `planar` \\| `loft` \\| `boundary` \\| `sweep` \\| `offset` \\| `ruled` \\| `fill` \\| `flatten` \\| `radiate` \\| `mid_surface` \\| `freeform` \\| `trim` \\| `untrim` \\| `extend` \\| `knit` \\| `delete_face` \\| `delete_hole` \\| `replace_face` \\| `thicken` \\| `thicken_cut` \\| `cut_with_surface` \\| `join` \\| `inspect` \\| `mode` \\| `curve_points` \\| `curve_composite` \\| `curve_projected` \\| `loft_check` \\| `hide` \\| `show` | yes |  |
 | `on` | boolean |  |  |
 | `sketch` | string |  |  |
 | `profile` | string |  |  |
 | `path` | string |  |  |
 | `profiles` | array of string |  |  |
-| `guides` | array of string |  |  |
+| `start_tangency` | `none` \\| `normal` |  |  |
+| `end_tangency` | `none` \\| `normal` |  |  |
+| `size_mm` | number (> 0, <= 100) |  |  |
+| `guides` | array of string or object |  | v3.24 each guide is a sketch name OR {sketch, segments:[i...]}: those segments (indexes from sw_sketch) of a sketch become a new guide sketch on the same plane (Convert Entities), like picking a chain in the UI |
 | `depth_mm` | number (> 0, <= 10000) |  |  |
 | `depth2_mm` | number (> 0, <= 10000) |  |  |
 | `mid_plane` | boolean |  |  |
@@ -1616,7 +1688,15 @@ v3.19 The Surfaces tab (Superficies), one action per call, on a managed part; po
 | `linear` | boolean |  |  |
 | `mode` | `delete` \\| `patch` \\| `fill` \\| `fill_tangent` |  |  |
 | `ruled_type` | `tangent` \\| `normal` \\| `tapered` \\| `perpendicular` \\| `sweep` |  |  |
+| `tears` | boolean |  |  |
+| `accuracy` | integer (>= 1, <= 100) |  |  |
+| `tangent_propagate` | boolean |  |  |
+| `position` | number (>= 0, <= 1) |  |  |
+| `freeform_curves` | array of object |  |  |
 | `mutual` | boolean |  |  |
+| `points_mm` | array of array of number (>= -100000, <= 100000) (3) |  |  |
+| `curves` | array of string |  |  |
+| `onto_sketch` | string |  |  |
 | `tool_sketch` | string |  |  |
 | `tool_plane_index` | integer (>= 0, <= 50) |  |  |
 | `face_point_mm` | array of number (>= -100000, <= 100000) (3) |  |  |
@@ -1636,6 +1716,16 @@ Inspect faces and unique edges with short-lived selection references. Coordinate
 | Option | Type / values | Required | Notes |
 |---|---|---|---|
 | `document_id` | string | yes |  |
+
+### `sw_tree_folder`
+
+v3.25 Put named features of a managed part (reference planes, sketches...) in one folder of the FeatureManager tree (Carpeta1..., default name, nothing is renamed) so a model with many stations stays readable. SolidWorks folds only features that are next to each other in the tree: the error names what lies between. Unsaved until sw_save.
+
+| Option | Type / values | Required | Notes |
+|---|---|---|---|
+| `document_id` | string | yes |  |
+| `features` | array of string | yes |  |
+| `keep_broken` | boolean |  | Keep the result even if it breaks other features/mates (default: it is undone automatically and verified). sw_save then refuses to save until fixed. |
 
 ### `sw_wrap`
 
